@@ -123,7 +123,7 @@ func (ra *RestAgent) Deliver(bundleDescriptor *store.BundleDescriptor) error {
 		if bundleDescriptor.Destination == v.(bpv7.EndpointID) {
 			uuids = append(uuids, k.(string))
 		}
-		return false // multiple clients might be registered for some endpoint
+		return true // multiple clients might be registered for some endpoint
 	})
 
 	ra.mailboxMutex.Lock()
@@ -247,6 +247,9 @@ func (ra *RestAgent) handleFetch(w http.ResponseWriter, r *http.Request) {
 
 		delete(ra.mailboxes, fetchRequest.UUID)
 		ra.mailboxMutex.Unlock()
+	} else if _, ok := ra.clients.Load(fetchRequest.UUID); !ok {
+		log.WithField("uuid", fetchRequest.UUID).Debug("REST client cannot fetch for unknown UUID")
+		fetchResponse.Error = "Invalid UUID"
 	} else if !ok {
 		log.WithField("uuid", fetchRequest.UUID).Debug("REST client has no new bundles to fetch")
 		fetchResponse.Bundles = make([]bpv7.Bundle, 0)

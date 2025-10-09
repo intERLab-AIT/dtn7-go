@@ -162,7 +162,7 @@ func (ra *RestAgent) Deliver(bundleDescriptor *store.BundleDescriptor) error {
 }
 
 // randomUuid to be used for authentication. UUID not compliant with RFC 4122.
-func (_ *RestAgent) randomUuid() (uuid string, err error) {
+func (*RestAgent) randomUuid() (uuid string, err error) {
 	uuidBytes := make([]byte, 16)
 	if _, err = rand.Read(uuidBytes); err == nil {
 		uuid = fmt.Sprintf("%x-%x-%x-%x-%x",

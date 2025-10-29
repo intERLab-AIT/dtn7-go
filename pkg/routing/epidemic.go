@@ -31,7 +31,10 @@ func NewEpidemicRouting() *EpidemicRouting {
 func (er *EpidemicRouting) NotifyNewBundle(_ *store.BundleDescriptor) {}
 
 func (er *EpidemicRouting) SelectPeersForForwarding(bp *store.BundleDescriptor) (css []cla.ConvergenceSender) {
-	css = filterCLAs(bp, cla.GetManagerSingleton().GetSenders())
+	allSenders := cla.GetManagerSingleton().GetSenders()
+	alreadySent := bp.GetAlreadySent()
+
+	css = filterCLAs(bp, allSenders)
 
 	endpoints := make(map[bpv7.EndpointID]bool)
 	unique := make([]cla.ConvergenceSender, 0, len(css))
@@ -48,6 +51,8 @@ func (er *EpidemicRouting) SelectPeersForForwarding(bp *store.BundleDescriptor) 
 	log.WithFields(log.Fields{
 		"bundle":        bp.ID,
 		"new receivers": css,
+		"all receivers": allSenders,
+		"already sent":  alreadySent,
 	}).Debug("EpidemicRouting selected Convergence Senders for an outgoing bundle")
 
 	return

@@ -1,0 +1,34 @@
+node_id = "dtn://node0/"
+log_level = "Debug"
+
+[Store]
+path = "/tmp/dtn_store"
+
+# Specify routing algorithm
+[Routing]
+algorithm = "epidemic"
+
+[Agents]
+[Agents.REST]
+# Address to bind the server to.
+address = "localhost:8080"
+
+[Agents.UNIX]
+# path to the communication socket
+socket = "/tmp/dtnd.socket"
+
+#[[Listener]]
+#type = "QUICL"
+#address = ":35037"
+
+# Add a TCP listener
+[[Listener]]
+type = "MTCP"
+address = ":4556"
+
+[Discovery]
+use_broadcast = true
+broadcast_address = "192.168.49.255"
+
+[Cron]
+dispatch ="10s"

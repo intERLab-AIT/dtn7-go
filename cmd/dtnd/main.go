@@ -92,7 +92,15 @@ func main() {
 	}
 
 	// Setup neighbour discovery
-	err = discovery.InitialiseManager(conf.NodeID, conf.Discovery, 2*time.Second, true, false, cla.GetManagerSingleton().NotifyReceive)
+	err = discovery.InitialiseManager(
+		conf.NodeID,
+		conf.Discovery,
+		2*time.Second,
+		true,
+		false,
+		conf.DiscoveryConfig.UseBroadcast,
+		conf.DiscoveryConfig.BroadcastAddr,
+		cla.GetManagerSingleton().NotifyReceive)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"error": err,

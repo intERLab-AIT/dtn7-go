@@ -31,24 +31,36 @@ func (e *ConfigError) Error() string {
 func (e *ConfigError) Unwrap() error { return e.cause }
 
 type config struct {
-	NodeID    bpv7.EndpointID
-	LogLevel  log.Level
-	Store     storeConfig
-	Routing   routingConfig
-	Listener  []cla.ListenerConfig
-	Agents    agentsConfig
-	Discovery []discovery.Announcement
-	Cron      cronConfig
+	NodeID          bpv7.EndpointID
+	LogLevel        log.Level
+	Store           storeConfig
+	Routing         routingConfig
+	Listener        []cla.ListenerConfig
+	Agents          agentsConfig
+	Discovery       []discovery.Announcement
+	DiscoveryConfig discoveryConfig
+	Cron            cronConfig
 }
 
 type tomlConfig struct {
-	NodeID   string `toml:"node_id"`
-	LogLevel string `toml:"log_level"`
-	Store    storeConfig
-	Routing  tomlRoutingConfig
-	Listener []listenerTomlConfig
-	Agents   agentsConfig
-	Cron     cronTomlConfig
+	NodeID    string `toml:"node_id"`
+	LogLevel  string `toml:"log_level"`
+	Store     storeConfig
+	Routing   tomlRoutingConfig
+	Listener  []listenerTomlConfig
+	Discovery tomlDiscoveryConfig
+	Agents    agentsConfig
+	Cron      cronTomlConfig
+}
+
+type discoveryConfig struct {
+	UseBroadcast  bool
+	BroadcastAddr string
+}
+
+type tomlDiscoveryConfig struct {
+	UseBroadcast  bool   `toml:"use_broadcast"`
+	BroadcastAddr string `toml:"broadcast_address"`
 }
 
 type storeConfig struct {
@@ -152,6 +164,12 @@ func parse(filename string) (config, error) {
 
 	// Agents config needs no parsing
 	conf.Agents = tomlConf.Agents
+
+	// Parse discovery config
+	conf.DiscoveryConfig = discoveryConfig{
+		UseBroadcast:  tomlConf.Discovery.UseBroadcast,
+		BroadcastAddr: tomlConf.Discovery.BroadcastAddr,
+	}
 
 	// Parse cron config
 	dispatchTime, err := time.ParseDuration(tomlConf.Cron.Dispatch)

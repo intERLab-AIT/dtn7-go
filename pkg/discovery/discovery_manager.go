@@ -27,6 +27,9 @@ const (
 	// address6 is the default multicast IPv4 add6ess used for discovery.
 	address6 = "ff02::23"
 
+	// broadcast4 is the default broadcast IPv4 address used for discovery.
+	broadcast4 = "255.255.255.255"
+
 	// port is the default multicast UDP port used for discovery.
 	port = 35039
 )
@@ -35,6 +38,11 @@ const (
 type Manager struct {
 	NodeId          bpv7.EndpointID
 	receiveCallback func(*bpv7.Bundle)
+
+	// UseBroadcast enables broadcast mode instead of multicast
+	UseBroadcast bool
+	// Override Broadcast address (e.g., "192.168.49.255")
+	BroadcastAddr string
 
 	stopChan4 chan struct{}
 	stopChan6 chan struct{}
@@ -46,6 +54,7 @@ func InitialiseManager(
 	nodeId bpv7.EndpointID,
 	announcements []Announcement, announcementInterval time.Duration,
 	ipv4, ipv6 bool,
+	useBroadcast bool, broadcastAddr string,
 	receiveCallback func(*bpv7.Bundle)) error {
 
 	if managerSingleton != nil {
@@ -55,6 +64,8 @@ func InitialiseManager(
 	var manager = &Manager{
 		NodeId:          nodeId,
 		receiveCallback: receiveCallback,
+		UseBroadcast:    useBroadcast,
+		BroadcastAddr:   broadcastAddr,
 	}
 	if ipv4 {
 		manager.stopChan4 = make(chan struct{})
@@ -63,10 +74,22 @@ func InitialiseManager(
 		manager.stopChan6 = make(chan struct{})
 	}
 
+	// Determine the address to use
+	discoveryAddr := address4
+	if useBroadcast {
+		if broadcastAddr != "" {
+			discoveryAddr = broadcastAddr
+		} else {
+			discoveryAddr = broadcast4
+		}
+	}
+
 	log.WithFields(log.Fields{
 		"interval":      announcementInterval,
 		"IPv4":          ipv4,
 		"IPv6":          ipv6,
+		"useBroadcast":  useBroadcast,
+		"address":       discoveryAddr,
 		"announcements": announcements,
 	}).Info("Starting discovery manager")
 
@@ -82,7 +105,7 @@ func InitialiseManager(
 		ipVersion        peerdiscovery.IPVersion
 		notify           func(discovered peerdiscovery.Discovered)
 	}{
-		{ipv4, address4, manager.stopChan4, peerdiscovery.IPv4, manager.notify},
+		{ipv4, discoveryAddr, manager.stopChan4, peerdiscovery.IPv4, manager.notify},
 		{ipv6, address6, manager.stopChan6, peerdiscovery.IPv6, manager.notify6},
 	}
 

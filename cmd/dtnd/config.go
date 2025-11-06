@@ -54,13 +54,15 @@ type tomlConfig struct {
 }
 
 type discoveryConfig struct {
-	UseBroadcast  bool
-	BroadcastAddr string
+	UseBroadcast    bool
+	BroadcastAddr   string
+	RestartInterval int
 }
 
 type tomlDiscoveryConfig struct {
-	UseBroadcast  bool   `toml:"use_broadcast"`
-	BroadcastAddr string `toml:"broadcast_address"`
+	UseBroadcast    bool   `toml:"use_broadcast"`
+	BroadcastAddr   string `toml:"broadcast_address"`
+	RestartInterval int    `toml:"restart_interval"`
 }
 
 type storeConfig struct {
@@ -167,8 +169,9 @@ func parse(filename string) (config, error) {
 
 	// Parse discovery config
 	conf.DiscoveryConfig = discoveryConfig{
-		UseBroadcast:  tomlConf.Discovery.UseBroadcast,
-		BroadcastAddr: tomlConf.Discovery.BroadcastAddr,
+		UseBroadcast:    tomlConf.Discovery.UseBroadcast,
+		BroadcastAddr:   tomlConf.Discovery.BroadcastAddr,
+		RestartInterval: tomlConf.Discovery.RestartInterval,
 	}
 
 	// Parse cron config

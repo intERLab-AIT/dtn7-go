@@ -46,6 +46,15 @@ type Manager struct {
 
 	stopChan4 chan struct{}
 	stopChan6 chan struct{}
+
+	// Parameters for restart
+	announcements        []Announcement
+	announcementInterval time.Duration
+	ipv4                 bool
+	ipv6                 bool
+	restartTicker        *time.Ticker
+	restartStopChan      chan struct{}
+	restartDuration      time.Duration
 }
 
 var managerSingleton *Manager
@@ -55,17 +64,30 @@ func InitialiseManager(
 	announcements []Announcement, announcementInterval time.Duration,
 	ipv4, ipv6 bool,
 	useBroadcast bool, broadcastAddr string,
+	restartDurationSeconds int,
 	receiveCallback func(*bpv7.Bundle)) error {
 
 	if managerSingleton != nil {
 		return util.NewAlreadyInitialisedError("Discovery Manager")
 	}
 
+	var restartDuration time.Duration
+	if restartDurationSeconds > 0 {
+		restartDuration = time.Duration(restartDurationSeconds) * time.Second
+	}
+	// If restartDurationSeconds <= 0, restartDuration remains 0 (never restart)
+
 	var manager = &Manager{
-		NodeId:          nodeId,
-		receiveCallback: receiveCallback,
-		UseBroadcast:    useBroadcast,
-		BroadcastAddr:   broadcastAddr,
+		NodeId:               nodeId,
+		receiveCallback:      receiveCallback,
+		UseBroadcast:         useBroadcast,
+		BroadcastAddr:        broadcastAddr,
+		announcements:        announcements,
+		announcementInterval: announcementInterval,
+		ipv4:                 ipv4,
+		ipv6:                 ipv6,
+		restartStopChan:      make(chan struct{}),
+		restartDuration:      restartDuration,
 	}
 	if ipv4 {
 		manager.stopChan4 = make(chan struct{})
@@ -74,77 +96,19 @@ func InitialiseManager(
 		manager.stopChan6 = make(chan struct{})
 	}
 
-	// Determine the address to use
-	discoveryAddr := address4
-	if useBroadcast {
-		if broadcastAddr != "" {
-			discoveryAddr = broadcastAddr
-		} else {
-			discoveryAddr = broadcast4
-		}
-	}
+	managerSingleton = manager
 
-	log.WithFields(log.Fields{
-		"interval":      announcementInterval,
-		"IPv4":          ipv4,
-		"IPv6":          ipv6,
-		"useBroadcast":  useBroadcast,
-		"address":       discoveryAddr,
-		"announcements": announcements,
-	}).Info("Starting discovery manager")
-
-	msg, err := MarshalAnnouncements(announcements)
+	// Start discovery
+	err := manager.restart()
 	if err != nil {
 		return err
 	}
-
-	sets := []struct {
-		active           bool
-		multicastAddress string
-		stopChan         chan struct{}
-		ipVersion        peerdiscovery.IPVersion
-		notify           func(discovered peerdiscovery.Discovered)
-	}{
-		{ipv4, discoveryAddr, manager.stopChan4, peerdiscovery.IPv4, manager.notify},
-		{ipv6, address6, manager.stopChan6, peerdiscovery.IPv6, manager.notify6},
+	// Start periodic restart goroutine only if restartDuration > 0
+	if manager.restartDuration > 0 {
+		manager.restartTicker = time.NewTicker(manager.restartDuration)
+		go manager.periodicRestart()
 	}
 
-	for _, set := range sets {
-		if !set.active {
-			continue
-		}
-
-		set := peerdiscovery.Settings{
-			Limit:            -1,
-			Port:             fmt.Sprintf("%d", port),
-			MulticastAddress: set.multicastAddress,
-			Payload:          msg,
-			Delay:            announcementInterval,
-			TimeLimit:        -1,
-			StopChan:         set.stopChan,
-			AllowSelf:        true,
-			IPVersion:        set.ipVersion,
-			Notify:           set.notify,
-		}
-
-		discoverErrChan := make(chan error)
-		go func() {
-			_, discoverErr := peerdiscovery.Discover(set)
-			discoverErrChan <- discoverErr
-		}()
-
-		select {
-		case discoverErr := <-discoverErrChan:
-			if discoverErr != nil {
-				return discoverErr
-			}
-
-		case <-time.After(time.Second):
-			break
-		}
-	}
-
-	managerSingleton = manager
 	return nil
 }
 
@@ -204,8 +168,115 @@ func (manager *Manager) handleDiscovery(announcement Announcement, addr string) 
 	cla.GetManagerSingleton().Register(conv)
 }
 
+// periodicRestart restarts discovery every minute
+func (manager *Manager) periodicRestart() {
+	for {
+		select {
+		case <-manager.restartTicker.C:
+			log.Debug("Restarting discovery manager")
+			if err := manager.restart(); err != nil {
+				log.WithError(err).Warn("Failed to restart discovery manager")
+			}
+		case <-manager.restartStopChan:
+			return
+		}
+	}
+}
+
+// restart stops and restarts the discovery process
+func (manager *Manager) restart() error {
+	// Stop current discovery
+	for _, c := range []chan struct{}{manager.stopChan4, manager.stopChan6} {
+		if c != nil {
+			select {
+			case c <- struct{}{}:
+			default:
+			}
+		}
+	}
+
+	// Recreate stop channels
+	if manager.ipv4 {
+		manager.stopChan4 = make(chan struct{})
+	}
+	if manager.ipv6 {
+		manager.stopChan6 = make(chan struct{})
+	}
+
+	// Determine the address to use
+	discoveryAddr := address4
+	if manager.UseBroadcast {
+		if manager.BroadcastAddr != "" {
+			discoveryAddr = manager.BroadcastAddr
+		} else {
+			discoveryAddr = broadcast4
+		}
+	}
+
+	msg, err := MarshalAnnouncements(manager.announcements)
+	if err != nil {
+		return err
+	}
+
+	sets := []struct {
+		active           bool
+		multicastAddress string
+		stopChan         chan struct{}
+		ipVersion        peerdiscovery.IPVersion
+		notify           func(discovered peerdiscovery.Discovered)
+	}{
+		{manager.ipv4, discoveryAddr, manager.stopChan4, peerdiscovery.IPv4, manager.notify},
+		{manager.ipv6, address6, manager.stopChan6, peerdiscovery.IPv6, manager.notify6},
+	}
+
+	for _, set := range sets {
+		if !set.active {
+			continue
+		}
+
+		set := peerdiscovery.Settings{
+			Limit:            -1,
+			Port:             fmt.Sprintf("%d", port),
+			MulticastAddress: set.multicastAddress,
+			Payload:          msg,
+			Delay:            manager.announcementInterval,
+			TimeLimit:        -1,
+			StopChan:         set.stopChan,
+			AllowSelf:        true,
+			IPVersion:        set.ipVersion,
+			Notify:           set.notify,
+		}
+
+		discoverErrChan := make(chan error)
+		go func() {
+			_, discoverErr := peerdiscovery.Discover(set)
+			discoverErrChan <- discoverErr
+		}()
+
+		select {
+		case discoverErr := <-discoverErrChan:
+			if discoverErr != nil {
+				return discoverErr
+			}
+
+		case <-time.After(time.Second):
+			break
+		}
+	}
+
+	return nil
+}
+
 // Close this Manager.
 func (manager *Manager) Close() {
+	// Stop periodic restart
+	if manager.restartTicker != nil {
+		manager.restartTicker.Stop()
+	}
+	if manager.restartStopChan != nil {
+		close(manager.restartStopChan)
+	}
+
 	for _, c := range []chan struct{}{manager.stopChan4, manager.stopChan6} {
 		if c != nil {
 			c <- struct{}{}

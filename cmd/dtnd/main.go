@@ -100,6 +100,7 @@ func main() {
 		false,
 		conf.DiscoveryConfig.UseBroadcast,
 		conf.DiscoveryConfig.BroadcastAddr,
+		conf.DiscoveryConfig.RestartInterval,
 		cla.GetManagerSingleton().NotifyReceive)
 	if err != nil {
 		log.WithFields(log.Fields{

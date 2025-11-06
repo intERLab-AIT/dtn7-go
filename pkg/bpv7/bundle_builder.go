@@ -6,6 +6,7 @@ package bpv7
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -562,7 +563,12 @@ func BuildFromMap(m map[string]interface{}) (bndl *Bundle, err error) {
 		// func (bldr *BundleBuilder) PayloadBlock(args ...interface{}) *BundleBuilder
 		case "payload_block":
 			if sArgs, ok := args.(string); ok {
-				bldr.PayloadBlock([]byte(sArgs))
+				// Try to decode as base64 first, fallback to treating as UTF-8 string
+				if decoded, err := base64.StdEncoding.DecodeString(sArgs); err == nil && len(decoded) > 0 {
+					bldr.PayloadBlock(decoded)
+				} else {
+					bldr.PayloadBlock([]byte(sArgs))
+				}
 			} else {
 				bldr.PayloadBlock(args)
 			}

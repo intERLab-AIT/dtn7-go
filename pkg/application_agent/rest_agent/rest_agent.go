@@ -187,6 +187,31 @@ func (ra *RestAgent) handleRegister(w http.ResponseWriter, r *http.Request) {
 	} else {
 		ra.clients.Store(uuid, eid)
 		registerResponse.UUID = uuid
+
+		// Deliver any pending bundles for this endpoint (late registration support)
+		if pendingBundles, err := store.GetStoreSingleton().GetByDestination(eid); err == nil && len(pendingBundles) > 0 {
+			ra.mailboxMutex.Lock()
+			mailbox := make(map[bpv7.BundleID]bpv7.Bundle)
+			for _, bundleDescriptor := range pendingBundles {
+				if bndl, loadErr := bundleDescriptor.Load(); loadErr == nil {
+					mailbox[bundleDescriptor.ID] = *bndl
+					log.WithFields(log.Fields{
+						"bundle": bundleDescriptor.ID.String(),
+						"uuid":   uuid,
+						"eid":    eid.String(),
+					}).Info("Delivering pending bundle to late-registered REST client")
+				} else {
+					log.WithFields(log.Fields{
+						"bundle": bundleDescriptor.ID.String(),
+						"error":  loadErr,
+					}).Warn("Failed to load pending bundle for late registration")
+				}
+			}
+			if len(mailbox) > 0 {
+				ra.mailboxes[uuid] = mailbox
+			}
+			ra.mailboxMutex.Unlock()
+		}
 	}
 
 	log.WithFields(log.Fields{

@@ -120,6 +120,21 @@ func (bst *BundleStore) GetDispatchable() ([]*BundleDescriptor, error) {
 	return ptrs, nil
 }
 
+func (bst *BundleStore) GetByDestination(destination bpv7.EndpointID) ([]*BundleDescriptor, error) {
+	bundles := make([]BundleDescriptor, 0)
+	err := bst.metadataStore.Find(&bundles, badgerhold.Where("Destination").Eq(destination))
+	if err != nil {
+		return nil, err
+	}
+
+	ptrs := make([]*BundleDescriptor, len(bundles))
+	for i := range bundles {
+		ptrs[i] = &bundles[i]
+	}
+
+	return ptrs, nil
+}
+
 func (bst *BundleStore) loadEntireBundle(filename string) (*bpv7.Bundle, error) {
 	path := filepath.Join(bst.bundleDirectory, filename)
 	f, err := os.Open(path)

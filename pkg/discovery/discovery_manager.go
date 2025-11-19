@@ -195,6 +195,9 @@ func (manager *Manager) restart() error {
 		}
 	}
 
+	// Wait for discovery goroutines to actually terminate before restarting
+	time.Sleep(100 * time.Millisecond)
+
 	// Recreate stop channels
 	if manager.ipv4 {
 		manager.stopChan4 = make(chan struct{})

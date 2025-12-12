@@ -36,6 +36,7 @@ type config struct {
 	Store           storeConfig
 	Routing         routingConfig
 	Listener        []cla.ListenerConfig
+	Peer            []peerConfig
 	Agents          agentsConfig
 	Discovery       []discovery.Announcement
 	DiscoveryConfig discoveryConfig
@@ -48,6 +49,7 @@ type tomlConfig struct {
 	Store     storeConfig
 	Routing   tomlRoutingConfig
 	Listener  []listenerTomlConfig
+	Peer      []peerTomlConfig
 	Discovery tomlDiscoveryConfig
 	Agents    agentsConfig
 	Cron      cronTomlConfig
@@ -80,6 +82,18 @@ type routingConfig struct {
 type listenerTomlConfig struct {
 	Type    string
 	Address string
+}
+
+type peerConfig struct {
+	Type       cla.CLAType
+	Address    string
+	EndpointID bpv7.EndpointID
+}
+
+type peerTomlConfig struct {
+	Type       string `toml:"type"`
+	Address    string `toml:"address"`
+	EndpointID string `toml:"endpoint_id"`
 }
 
 // agentsConfig describes the ApplicationAgents/Agent-configuration block.
@@ -123,6 +137,7 @@ func parse(filename string) (config, error) {
 
 	conf := config{
 		Listener: make([]cla.ListenerConfig, 0, len(tomlConf.Listener)),
+		Peer:     make([]peerConfig, 0, len(tomlConf.Peer)),
 	}
 
 	// Parse and set NodeID
@@ -162,6 +177,19 @@ func parse(filename string) (config, error) {
 			return config{}, NewConfigError("Error parsing listener port", err)
 		}
 		conf.Discovery = append(conf.Discovery, discovery.Announcement{Type: claType, Port: uint(port), Endpoint: nodeID})
+	}
+
+	// Parse peer configuration
+	for _, peer := range tomlConf.Peer {
+		claType, err := cla.TypeFromString(peer.Type)
+		if err != nil {
+			return config{}, NewConfigError("Error parsing Peer Type", err)
+		}
+		peerEndpointID, err := bpv7.NewEndpointID(peer.EndpointID)
+		if err != nil {
+			return config{}, NewConfigError("Error parsing Peer EndpointID", err)
+		}
+		conf.Peer = append(conf.Peer, peerConfig{Type: claType, Address: peer.Address, EndpointID: peerEndpointID})
 	}
 
 	// Agents config needs no parsing

@@ -31,5 +31,16 @@ restart_interval = 20
 #use_broadcast = true
 #broadcast_address = "192.168.49.255"
 
+# Static peers - persistent connections to specific IP
+#[[Peer]]
+#type = "MTCP"
+#address = "192.168.1.100:4556"
+#endpoint_id = "dtn://peer1/"
+
+#[[Peer]]
+#type = "MTCP"
+#address = "10.0.0.5:4556"
+#endpoint_id = "dtn://peer2/"
+
 [Cron]
 dispatch ="10s"

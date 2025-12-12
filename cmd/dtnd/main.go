@@ -91,6 +91,28 @@ func main() {
 		}
 	}
 
+	// Setup static peers
+	for _, peerConf := range conf.Peer {
+		var peer cla.Convergence
+		switch peerConf.Type {
+		case cla.MTCP:
+			peer = mtcp.NewMTCPClient(peerConf.Address, peerConf.EndpointID)
+			log.WithFields(log.Fields{
+				"address":  peerConf.Address,
+				"endpoint": peerConf.EndpointID,
+			}).Info("Registering static MTCP peer")
+		case cla.QUICL:
+			peer = quicl.NewDialerEndpoint(peerConf.Address, conf.NodeID, cla.GetManagerSingleton().NotifyReceive)
+			log.WithFields(log.Fields{
+				"address":  peerConf.Address,
+				"endpoint": peerConf.EndpointID,
+			}).Info("Registering static QUICL peer")
+		default:
+			log.WithField("Type", peerConf.Type).Fatal("Not valid peer type")
+		}
+		cla.GetManagerSingleton().Register(peer)
+	}
+
 	// Setup neighbour discovery
 	err = discovery.InitialiseManager(
 		conf.NodeID,
@@ -157,5 +179,4 @@ func main() {
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
-	return
 }

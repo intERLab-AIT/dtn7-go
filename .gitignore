@@ -135,3 +135,5 @@ tags
 
 Rapid testing framework
 *.fail
+cmd/dtnd/dtnd
+cmd/dtnd/dtnclient

@@ -41,6 +41,7 @@ type config struct {
 	Discovery       []discovery.Announcement
 	DiscoveryConfig discoveryConfig
 	Cron            cronConfig
+	Resource        resourceConfig
 }
 
 type tomlConfig struct {
@@ -53,6 +54,7 @@ type tomlConfig struct {
 	Discovery tomlDiscoveryConfig
 	Agents    agentsConfig
 	Cron      cronTomlConfig
+	Resource  tomlResourceConfig
 }
 
 type discoveryConfig struct {
@@ -68,7 +70,8 @@ type tomlDiscoveryConfig struct {
 }
 
 type storeConfig struct {
-	Path string
+	Path             string
+	ValueLogFileSize int64
 }
 
 type tomlRoutingConfig struct {
@@ -117,6 +120,14 @@ type cronConfig struct {
 
 type cronTomlConfig struct {
 	Dispatch string
+}
+
+type resourceConfig struct {
+	MemoryLimit int64
+}
+
+type tomlResourceConfig struct {
+	MemoryLimit int64 `toml:"memory_limit"`
 }
 
 func parseListenPort(endpoint string) (port int, err error) {
@@ -208,6 +219,14 @@ func parse(filename string) (config, error) {
 		return config{}, NewConfigError("Error parsing dispatch period", err)
 	}
 	conf.Cron.Dispatch = dispatchTime
+
+	// Parse resource config
+	conf.Resource = resourceConfig{
+		MemoryLimit: tomlConf.Resource.MemoryLimit,
+	}
+	if conf.Resource.MemoryLimit < 0 {
+		return config{}, NewConfigError("Memory limit must be non-negative (0 = unlimited)", nil)
+	}
 
 	return conf, nil
 }

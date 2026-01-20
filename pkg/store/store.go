@@ -40,7 +40,7 @@ var storeSingleton *BundleStore
 // InitialiseStore initialises the store singleton
 // To access Singleton-instance, use GetStoreSingleton
 // Further calls to this function after initialisation will return a util.AlreadyInitialised-error
-func InitialiseStore(nodeID bpv7.EndpointID, path string) error {
+func InitialiseStore(nodeID bpv7.EndpointID, path string, valueLogFileSize int64) error {
 	if storeSingleton != nil {
 		return util.NewAlreadyInitialisedError("BundleStore")
 	}
@@ -48,6 +48,9 @@ func InitialiseStore(nodeID bpv7.EndpointID, path string) error {
 	opts := badgerhold.DefaultOptions
 	opts.Dir = path
 	opts.ValueDir = path
+	if valueLogFileSize > 0 {
+		opts.ValueLogFileSize = valueLogFileSize
+	}
 
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return err

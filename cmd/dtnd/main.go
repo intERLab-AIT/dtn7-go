@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -39,10 +40,18 @@ func main() {
 		TimestampFormat: "2006-01-02T15:04:05.000",
 	})
 
+	// Apply memory limit if configured
+	if conf.Resource.MemoryLimit > 0 {
+		debug.SetMemoryLimit(conf.Resource.MemoryLimit)
+		log.WithField("limit", conf.Resource.MemoryLimit).Info("Memory limit enabled")
+	} else {
+		log.Info("Memory limit disabled (unlimited)")
+	}
+
 	processing.SetOwnNodeID(conf.NodeID)
 
 	// Setup Store
-	err = store.InitialiseStore(conf.NodeID, conf.Store.Path)
+	err = store.InitialiseStore(conf.NodeID, conf.Store.Path, conf.Store.ValueLogFileSize)
 	if err != nil {
 		log.WithField("error", err).Fatal("Error initialising store")
 	}

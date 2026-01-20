@@ -1,8 +1,16 @@
 node_id = "dtn://node0/"
 log_level = "Debug"
 
+# Resource limits
+[Resource]
+# Soft memory limit in bytes (0 = unlimited)
+# Examples: 268435456 (256MB), 536870912 (512MB), 1073741824 (1GB)
+# Recommended for embedded/IoT devices to prevent OOM
+memory_limit = 536870912
+
 [Store]
 path = "/tmp/dtn_store"
+ValueLogFileSize = 134217728
 
 # Specify routing algorithm
 [Routing]

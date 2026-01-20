@@ -29,6 +29,16 @@ import (
 	"github.com/dtn7/dtn7-go/pkg/util"
 )
 
+// Config holds Badger database configuration options
+type Config struct {
+	ValueLogFileSize int64
+	MemTableSize     int64
+	NumMemtables     int
+	BlockCacheSize   int64
+	IndexCacheSize   int64
+	ValueThreshold   int64
+}
+
 type BundleStore struct {
 	nodeID          bpv7.EndpointID
 	metadataStore   *badgerhold.Store
@@ -40,7 +50,7 @@ var storeSingleton *BundleStore
 // InitialiseStore initialises the store singleton
 // To access Singleton-instance, use GetStoreSingleton
 // Further calls to this function after initialisation will return a util.AlreadyInitialised-error
-func InitialiseStore(nodeID bpv7.EndpointID, path string, valueLogFileSize int64) error {
+func InitialiseStore(nodeID bpv7.EndpointID, path string, cfg Config) error {
 	if storeSingleton != nil {
 		return util.NewAlreadyInitialisedError("BundleStore")
 	}
@@ -48,8 +58,23 @@ func InitialiseStore(nodeID bpv7.EndpointID, path string, valueLogFileSize int64
 	opts := badgerhold.DefaultOptions
 	opts.Dir = path
 	opts.ValueDir = path
-	if valueLogFileSize > 0 {
-		opts.ValueLogFileSize = valueLogFileSize
+	if cfg.ValueLogFileSize > 0 {
+		opts.ValueLogFileSize = cfg.ValueLogFileSize
+	}
+	if cfg.MemTableSize > 0 {
+		opts.MemTableSize = cfg.MemTableSize
+	}
+	if cfg.NumMemtables > 0 {
+		opts.NumMemtables = cfg.NumMemtables
+	}
+	if cfg.BlockCacheSize >= 0 {
+		opts.BlockCacheSize = cfg.BlockCacheSize
+	}
+	if cfg.IndexCacheSize >= 0 {
+		opts.IndexCacheSize = cfg.IndexCacheSize
+	}
+	if cfg.ValueThreshold > 0 {
+		opts.ValueThreshold = cfg.ValueThreshold
 	}
 
 	if err := os.MkdirAll(path, 0700); err != nil {

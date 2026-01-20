@@ -10,7 +10,15 @@ memory_limit = 536870912
 
 [Store]
 path = "/tmp/dtn_store"
-ValueLogFileSize = 134217728
+# Memory-optimized settings for embedded/IoT devices like Raspberry Pi
+# Total estimated memory usage: ~150MB (down from ~600MB default)
+ValueLogFileSize = 67108864    # 64MB per value log file (default: 1GB)
+MemTableSize = 16777216         # 16MB per memtable (default: 64MB)
+NumMemtables = 2                # Number of memtables in memory (default: 5)
+                                # Total memtable memory: 16MB × 2 = 32MB
+BlockCacheSize = 67108864       # 64MB block cache for SSTable blocks (default: 256MB)
+IndexCacheSize = 33554432       # 32MB cache for table indices (default: unlimited)
+ValueThreshold = 262144         # 256KB - values larger go to value log (default: 1MB)
 
 # Specify routing algorithm
 [Routing]

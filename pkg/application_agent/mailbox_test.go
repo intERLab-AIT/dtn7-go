@@ -20,7 +20,7 @@ func initMailboxTest(t *testing.T) (string, *Mailbox) {
 	instanceID := fmt.Sprintf("%v%v", rand.Uint64(), rand.Uint64())
 	nodeID, _ := bpv7.NewEndpointID("dtn://test/")
 
-	err := store.InitialiseStore(nodeID, fmt.Sprintf(mailboxTestFolderFormat, instanceID), 0)
+	err := store.InitialiseStore(nodeID, fmt.Sprintf(mailboxTestFolderFormat, instanceID), store.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

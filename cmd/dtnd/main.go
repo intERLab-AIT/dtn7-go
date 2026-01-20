@@ -51,7 +51,15 @@ func main() {
 	processing.SetOwnNodeID(conf.NodeID)
 
 	// Setup Store
-	err = store.InitialiseStore(conf.NodeID, conf.Store.Path, conf.Store.ValueLogFileSize)
+	storeCfg := store.Config{
+		ValueLogFileSize: conf.Store.ValueLogFileSize,
+		MemTableSize:     conf.Store.MemTableSize,
+		NumMemtables:     conf.Store.NumMemtables,
+		BlockCacheSize:   conf.Store.BlockCacheSize,
+		IndexCacheSize:   conf.Store.IndexCacheSize,
+		ValueThreshold:   conf.Store.ValueThreshold,
+	}
+	err = store.InitialiseStore(conf.NodeID, conf.Store.Path, storeCfg)
 	if err != nil {
 		log.WithField("error", err).Fatal("Error initialising store")
 	}

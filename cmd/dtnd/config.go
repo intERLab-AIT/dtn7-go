@@ -72,6 +72,11 @@ type tomlDiscoveryConfig struct {
 type storeConfig struct {
 	Path             string
 	ValueLogFileSize int64
+	MemTableSize     int64
+	NumMemtables     int
+	BlockCacheSize   int64
+	IndexCacheSize   int64
+	ValueThreshold   int64
 }
 
 type tomlRoutingConfig struct {

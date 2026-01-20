@@ -17,7 +17,7 @@ func initTest(t *rapid.T) {
 		t.Fatal(err)
 	}
 
-	err = InitialiseStore(nodeID, "/tmp/dtn7-test", 0)
+	err = InitialiseStore(nodeID, "/tmp/dtn7-test", Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

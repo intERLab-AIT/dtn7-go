@@ -49,7 +49,7 @@ func (er *EpidemicRouting) SelectPeersForForwarding(bp *store.BundleDescriptor) 
 	css = unique
 
 	log.WithFields(log.Fields{
-		"bundle":        bp.ID,
+		"bundle":        bp,
 		"new receivers": css,
 		"all receivers": allSenders,
 		"already sent":  alreadySent,

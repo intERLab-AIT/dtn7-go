@@ -17,7 +17,6 @@ import (
 	"github.com/dtn7/dtn7-go/pkg/cla"
 	"github.com/dtn7/dtn7-go/pkg/cla/mtcp"
 	"github.com/dtn7/dtn7-go/pkg/cla/quicl"
-	"github.com/dtn7/dtn7-go/pkg/util"
 )
 
 const (
@@ -66,9 +65,8 @@ func InitialiseManager(
 	useBroadcast bool, broadcastAddr string,
 	restartDurationSeconds int,
 	receiveCallback func(*bpv7.Bundle)) error {
-
 	if managerSingleton != nil {
-		return util.NewAlreadyInitialisedError("Discovery Manager")
+		log.Fatalf("Attempting to access an uninitialised discovery manager. This must never happen!")
 	}
 
 	var restartDuration time.Duration
@@ -119,6 +117,16 @@ func GetManagerSingleton() *Manager {
 		log.Fatalf("Attempting to access an uninitialised discovery manager. This must never happen!")
 	}
 	return managerSingleton
+}
+
+func (manager *Manager) Shutdown() {
+	managerSingleton = nil
+
+	for _, c := range []chan struct{}{manager.stopChan4, manager.stopChan6} {
+		if c != nil {
+			c <- struct{}{}
+		}
+	}
 }
 
 func (manager *Manager) notify6(discovered peerdiscovery.Discovered) {

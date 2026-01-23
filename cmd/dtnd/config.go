@@ -35,7 +35,7 @@ type config struct {
 	LogLevel        log.Level
 	Store           storeConfig
 	Routing         routingConfig
-	Listener        []cla.ListenerConfig
+	Listener        []ListenerConfig
 	Peer            []peerConfig
 	Agents          agentsConfig
 	Discovery       []discovery.Announcement
@@ -87,6 +87,12 @@ type routingConfig struct {
 	Algorithm routing.AlgorithmEnum
 }
 
+type ListenerConfig struct {
+	Type       cla.CLAType
+	Address    string
+	EndpointId bpv7.EndpointID
+}
+
 type listenerTomlConfig struct {
 	Type    string
 	Address string
@@ -121,10 +127,12 @@ type agentsUNIXConfig struct {
 
 type cronConfig struct {
 	Dispatch time.Duration
+	GC       time.Duration
 }
 
 type cronTomlConfig struct {
 	Dispatch string
+	GC       string
 }
 
 type resourceConfig struct {
@@ -152,7 +160,7 @@ func parse(filename string) (config, error) {
 	}
 
 	conf := config{
-		Listener: make([]cla.ListenerConfig, 0, len(tomlConf.Listener)),
+		Listener: make([]ListenerConfig, 0, len(tomlConf.Listener)),
 		Peer:     make([]peerConfig, 0, len(tomlConf.Peer)),
 	}
 
@@ -186,7 +194,7 @@ func parse(filename string) (config, error) {
 		if err != nil {
 			return config{}, NewConfigError("Error parsing Listener Type", err)
 		}
-		conf.Listener = append(conf.Listener, cla.ListenerConfig{Type: claType, Address: listener.Address, EndpointId: nodeID})
+		conf.Listener = append(conf.Listener, ListenerConfig{Type: claType, Address: listener.Address, EndpointId: nodeID})
 
 		port, err := parseListenPort(listener.Address)
 		if err != nil {
@@ -224,6 +232,11 @@ func parse(filename string) (config, error) {
 		return config{}, NewConfigError("Error parsing dispatch period", err)
 	}
 	conf.Cron.Dispatch = dispatchTime
+	gcTime, err := time.ParseDuration(tomlConf.Cron.GC)
+	if err != nil {
+		return config{}, NewConfigError("Error parsing gc period", err)
+	}
+	conf.Cron.GC = gcTime
 
 	// Parse resource config
 	conf.Resource = resourceConfig{

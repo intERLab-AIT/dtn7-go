@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/dtn7/dtn7-go/pkg/bpv7"
-	"github.com/dtn7/dtn7-go/pkg/util"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -42,10 +41,10 @@ var managerSingleton *Manager
 
 // InitialiseCLAManager initialises the manager-singleton
 // To access Singleton-instance, use GetManagerSingleton
-// Further calls to this function after initialisation will return a util.AlreadyInitialised-error
-func InitialiseCLAManager(receiveCallback func(bundle *bpv7.Bundle), connectCallback func(eid bpv7.EndpointID), disconnectCallback func(eid bpv7.EndpointID)) error {
+// Further calls to this function after initialisation will panic.
+func InitialiseCLAManager(receiveCallback func(bundle *bpv7.Bundle), connectCallback func(eid bpv7.EndpointID), disconnectCallback func(eid bpv7.EndpointID)) {
 	if managerSingleton != nil {
-		return util.NewAlreadyInitialisedError("CLA Manager")
+		log.Fatalf("Attempting to access an uninitialised CLA manager. This must never happen!")
 	}
 
 	manager := Manager{
@@ -59,7 +58,6 @@ func InitialiseCLAManager(receiveCallback func(bundle *bpv7.Bundle), connectCall
 		pendingRemoval:     make(map[string]bool),
 	}
 	managerSingleton = &manager
-	return nil
 }
 
 // GetManagerSingleton returns the manager singleton-instance.
@@ -69,6 +67,28 @@ func GetManagerSingleton() *Manager {
 		log.Fatalf("Attempting to access an uninitialised CLA manager. This must never happen!")
 	}
 	return managerSingleton
+}
+
+func (manager *Manager) Shutdown() {
+	managerSingleton = nil
+
+	manager.stateMutex.Lock()
+	defer manager.stateMutex.Unlock()
+
+	for _, receiver := range manager.receivers {
+		go receiver.Close()
+	}
+	manager.receivers = make([]ConvergenceReceiver, 0)
+
+	for _, sender := range manager.senders {
+		go sender.Close()
+	}
+	manager.senders = make([]ConvergenceSender, 0)
+
+	for _, listener := range manager.listeners {
+		go listener.Close()
+	}
+	manager.listeners = make([]ConvergenceListener, 0)
 }
 
 // GetSenders returns the list of currently active sender-type CLAs
@@ -94,8 +114,6 @@ func (manager *Manager) GetListeners() []ConvergenceListener {
 	defer manager.stateMutex.RUnlock()
 	return manager.listeners
 }
-
-// TODO: Method to create CLA from parameters
 
 // Register is the exported method to register a new CLA.
 // All it does is spawn the actual registration in a goroutine and return immediately
@@ -256,6 +274,8 @@ func (manager *Manager) NotifyDisconnect(cla Convergence) {
 	delete(manager.pendingRemoval, cla.Address())
 }
 
+// RegisterListener starts the ConvergenceListener
+// and, if the startup succeeds, adds it to the Manager's list of listeners
 func (manager *Manager) RegisterListener(listener ConvergenceListener) error {
 	err := listener.Start()
 	if err != nil {
@@ -265,26 +285,4 @@ func (manager *Manager) RegisterListener(listener ConvergenceListener) error {
 	manager.listeners = append(manager.listeners, listener)
 
 	return nil
-}
-
-func (manager *Manager) Shutdown() {
-	manager.stateMutex.Lock()
-	defer manager.stateMutex.Unlock()
-
-	for _, receiver := range manager.receivers {
-		go receiver.Close()
-	}
-	manager.receivers = make([]ConvergenceReceiver, 0)
-
-	for _, sender := range manager.senders {
-		go sender.Close()
-	}
-	manager.senders = make([]ConvergenceSender, 0)
-
-	for _, listener := range manager.listeners {
-		go listener.Close()
-	}
-	manager.listeners = make([]ConvergenceListener, 0)
-
-	managerSingleton = nil
 }

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2020 Alvar Penning
-// SPDX-FileCopyrightText: 2023 Markus Sommer
+// SPDX-FileCopyrightText: 2023, 2025 Markus Sommer
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -77,9 +77,10 @@ type RestAgent struct {
 	listenAddress string
 
 	// map UUIDs to EIDs and received bundles
-	clients      sync.Map // uuid[string] -> bpv7.EndpointID
-	mailboxes    map[string]map[bpv7.BundleID]bpv7.Bundle
-	mailboxMutex sync.Mutex
+	clients          sync.Map // uuid[string] -> bpv7.EndpointID
+	mailboxes        *application_agent.MailboxBank
+	pendingMailboxes map[string]map[bpv7.BundleID]bpv7.Bundle // For late registration support
+	mailboxMutex     sync.Mutex
 }
 
 func NewRestAgent(prefix, listenAddress string) (ra *RestAgent) {
@@ -87,9 +88,10 @@ func NewRestAgent(prefix, listenAddress string) (ra *RestAgent) {
 	restRouter := r.PathPrefix(prefix).Subrouter()
 
 	ra = &RestAgent{
-		router:        restRouter,
-		listenAddress: listenAddress,
-		mailboxes:     make(map[string]map[bpv7.BundleID]bpv7.Bundle),
+		router:           restRouter,
+		listenAddress:    listenAddress,
+		mailboxes:        application_agent.NewMailboxBank(),
+		pendingMailboxes: make(map[string]map[bpv7.BundleID]bpv7.Bundle),
 	}
 
 	ra.router.HandleFunc("/register", ra.handleRegister).Methods(http.MethodPost)
@@ -98,6 +100,10 @@ func NewRestAgent(prefix, listenAddress string) (ra *RestAgent) {
 	ra.router.HandleFunc("/build", ra.handleBuild).Methods(http.MethodPost)
 
 	return ra
+}
+
+func (ra *RestAgent) Name() string {
+	return fmt.Sprintf("RestAgent(%v)", ra.listenAddress)
 }
 
 func (ra *RestAgent) Start() error {
@@ -116,49 +122,58 @@ func (ra *RestAgent) Shutdown() {
 
 }
 
+func (ra *RestAgent) GC() {
+	log.WithField("agent", ra.Name()).Debug("Performing gc")
+	ra.mailboxes.GC()
+}
+
 // Deliver checks incoming BundleMessages and puts them in a mailbox.
 func (ra *RestAgent) Deliver(bundleDescriptor *store.BundleDescriptor) error {
-	var uuids []string
-	ra.clients.Range(func(k, v interface{}) bool {
-		if bundleDescriptor.Destination == v.(bpv7.EndpointID) {
-			uuids = append(uuids, k.(string))
-		}
-		return true // multiple clients might be registered for some endpoint
-	})
-
-	ra.mailboxMutex.Lock()
-	bndl, err := bundleDescriptor.Load()
+	// First try to deliver to registered mailboxes
+	err := ra.mailboxes.Deliver(bundleDescriptor)
 	if err != nil {
-		return err
-	}
-	for _, uuid := range uuids {
-		mailbox, exists := ra.mailboxes[uuid]
-		if !exists {
-			mailbox = map[bpv7.BundleID]bpv7.Bundle{bundleDescriptor.ID: *bndl}
-			ra.mailboxes[uuid] = mailbox
-			log.WithFields(log.Fields{
-				"bundle": bundleDescriptor.ID.String(),
-				"uuid":   uuid,
-			}).Debug("REST Application Agent delivering message to a client's inbox")
-		} else {
-			_, exists = mailbox[bundleDescriptor.ID]
-			if !exists {
-				mailbox[bundleDescriptor.ID] = *bndl
-				log.WithFields(log.Fields{
-					"bundle": bundleDescriptor.ID.String(),
-					"uuid":   uuid,
-				}).Debug("REST Application Agent delivering message to a client's inbox")
-			} else {
-				log.WithFields(log.Fields{
-					"bundle": bundleDescriptor.ID.String(),
-					"uuid":   uuid,
-				}).Debug("REST Application Agent not delivering message to a client's inbox. Message already present.")
+		// If no registered mailbox, check if any clients are listening for this destination
+		var uuids []string
+		ra.clients.Range(func(k, v interface{}) bool {
+			if bundleDescriptor.Destination == v.(bpv7.EndpointID) {
+				uuids = append(uuids, k.(string))
 			}
+			return true // multiple clients might be registered for some endpoint
+		})
+
+		if len(uuids) > 0 {
+			// Late registration: deliver to pending clients
+			ra.mailboxMutex.Lock()
+			bndl, loadErr := bundleDescriptor.Load()
+			if loadErr != nil {
+				ra.mailboxMutex.Unlock()
+				return loadErr
+			}
+			for _, uuid := range uuids {
+				mailbox, exists := ra.pendingMailboxes[uuid]
+				if !exists {
+					mailbox = map[bpv7.BundleID]bpv7.Bundle{bundleDescriptor.ID: *bndl}
+					ra.pendingMailboxes[uuid] = mailbox
+					log.WithFields(log.Fields{
+						"bundle": bundleDescriptor.ID.String(),
+						"uuid":   uuid,
+					}).Debug("REST Application Agent delivering message to pending client's inbox")
+				} else {
+					_, exists = mailbox[bundleDescriptor.ID]
+					if !exists {
+						mailbox[bundleDescriptor.ID] = *bndl
+						log.WithFields(log.Fields{
+							"bundle": bundleDescriptor.ID.String(),
+							"uuid":   uuid,
+						}).Debug("REST Application Agent delivering message to pending client's inbox")
+					}
+				}
+			}
+			ra.mailboxMutex.Unlock()
+			return nil
 		}
 	}
-	ra.mailboxMutex.Unlock()
-
-	return nil
+	return err
 }
 
 // randomUuid to be used for authentication. UUID not compliant with RFC 4122.
@@ -185,6 +200,7 @@ func (ra *RestAgent) handleRegister(w http.ResponseWriter, r *http.Request) {
 	} else if uuid, uuidErr := ra.randomUuid(); uuidErr != nil {
 		registerResponse.Error = uuidErr.Error()
 	} else {
+		ra.mailboxes.Register(eid)
 		ra.clients.Store(uuid, eid)
 		registerResponse.UUID = uuid
 
@@ -236,11 +252,21 @@ func (ra *RestAgent) handleUnregister(w http.ResponseWriter, r *http.Request) {
 		log.WithError(jsonErr).Warn("Failed to parse REST unregistration request")
 	} else {
 		log.WithField("uuid", unregisterRequest.UUID).Info("Unregister REST client")
-		ra.clients.Delete(unregisterRequest.UUID)
+		if eid, ok := ra.clients.Load(unregisterRequest.UUID); ok {
+			if err := ra.mailboxes.Unregister(eid.(bpv7.EndpointID)); err != nil {
+				log.WithFields(log.Fields{
+					"uuid":  unregisterRequest.UUID,
+					"eid":   eid,
+					"error": err,
+				}).Debug("Error unregistering eid")
+				unregisterResponse.Error = err.Error()
+			}
+		} else {
+			log.WithField("uuid", unregisterRequest.UUID).Debug("REST client does not know client")
+			unregisterResponse.Error = "REST client does not know client"
+		}
 
-		ra.mailboxMutex.Lock()
-		delete(ra.mailboxes, unregisterRequest.UUID)
-		ra.mailboxMutex.Unlock()
+		ra.clients.Delete(unregisterRequest.UUID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -259,25 +285,36 @@ func (ra *RestAgent) handleFetch(w http.ResponseWriter, r *http.Request) {
 	if jsonErr := json.NewDecoder(r.Body).Decode(&fetchRequest); jsonErr != nil {
 		log.WithError(jsonErr).Warn("Failed to parse REST fetch request")
 		fetchResponse.Error = jsonErr.Error()
-	} else if mailbox, ok := ra.mailboxes[fetchRequest.UUID]; ok {
-		log.WithField("uuid", fetchRequest.UUID).Info("REST client fetches bundles")
+	} else if eid, ok := ra.clients.Load(fetchRequest.UUID); ok {
+		log.WithFields(log.Fields{
+			"uuid": fetchRequest.UUID,
+			"eid":  eid,
+		}).Info("REST client fetches bundles")
 
-		ra.mailboxMutex.Lock()
-		bundles := make([]bpv7.Bundle, 0, len(mailbox))
-		for _, bundle := range mailbox {
-			bundles = append(bundles, bundle)
+		if mailbox, err := ra.mailboxes.GetMailbox(eid.(bpv7.EndpointID)); err == nil {
+			if bundles, err := mailbox.GetAll(true); err == nil {
+				fetchResponse.Bundles = make([]bpv7.Bundle, 0, len(bundles))
+				for _, bundle := range bundles {
+					fetchResponse.Bundles = append(fetchResponse.Bundles, *bundle)
+				}
+			} else {
+				log.WithFields(log.Fields{
+					"uuid": fetchRequest.UUID,
+					"eid":  eid,
+					"err":  err,
+				}).Debug("Failure fetching bundles")
+				fetchResponse.Error = err.Error()
+			}
+		} else {
+			log.WithFields(log.Fields{
+				"uuid": fetchRequest.UUID,
+				"eid":  eid,
+			}).Debug("No mailbox registered for this eid")
+			fetchResponse.Error = "No mailbox registered for this eid"
 		}
-
-		fetchResponse.Bundles = bundles
-
-		delete(ra.mailboxes, fetchRequest.UUID)
-		ra.mailboxMutex.Unlock()
-	} else if _, ok := ra.clients.Load(fetchRequest.UUID); !ok {
-		log.WithField("uuid", fetchRequest.UUID).Debug("REST client cannot fetch for unknown UUID")
-		fetchResponse.Error = "Invalid UUID"
-	} else if !ok {
-		log.WithField("uuid", fetchRequest.UUID).Debug("REST client has no new bundles to fetch")
-		fetchResponse.Bundles = make([]bpv7.Bundle, 0)
+	} else {
+		log.WithField("uuid", fetchRequest.UUID).Debug("REST client does not know client")
+		fetchResponse.Error = "REST client does not know client"
 	}
 
 	w.Header().Set("Content-Type", "application/json")

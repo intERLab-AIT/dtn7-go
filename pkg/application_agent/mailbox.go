@@ -5,7 +5,6 @@
 package application_agent
 
 import (
-	"fmt"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -13,28 +12,6 @@ import (
 	"github.com/dtn7/dtn7-go/pkg/bpv7"
 	"github.com/dtn7/dtn7-go/pkg/store"
 )
-
-type AlreadyDeliveredError bpv7.BundleID
-
-func NewAlreadyDeliveredError(bid bpv7.BundleID) *AlreadyDeliveredError {
-	err := AlreadyDeliveredError(bid)
-	return &err
-}
-
-func (err *AlreadyDeliveredError) Error() string {
-	return fmt.Sprintf("Bundle %v already in mailbox", bpv7.BundleID(*err).String())
-}
-
-type NoSuchBundleError bpv7.BundleID
-
-func NewNoSuchBundleError(bid bpv7.BundleID) *NoSuchBundleError {
-	err := NoSuchBundleError(bid)
-	return &err
-}
-
-func (err *NoSuchBundleError) Error() string {
-	return fmt.Sprintf("No Bundle with id %v in mailbox", bpv7.BundleID(*err).String())
-}
 
 // Mailbox provides message storage/querying/delivery for application agents to use.
 // The Mailbox does not store the actual bundles so we don't have to keep all bundles in memory all the time.
@@ -57,18 +34,17 @@ func NewMailbox() *Mailbox {
 // Returns AlreadyDeliveredError or error from the store.
 // Returns AlreadyDeliveredError if bundle with same BundleID is already stored.
 func (mailbox *Mailbox) Deliver(bndl *store.BundleDescriptor) error {
-	log.WithField("bid", bndl.ID).Debug("Delivering bundle to mailbox")
+	bid := bndl.ID()
+	log.WithField("bid", bid).Debug("Delivering bundle to mailbox")
 
 	mailbox.rwMutex.Lock()
 	defer mailbox.rwMutex.Unlock()
-
-	bid := bndl.ID
 
 	if _, ok := mailbox.messages[bid]; ok {
 		return NewAlreadyDeliveredError(bid)
 	}
 
-	if _, err := store.GetStoreSingleton().LoadBundleDescriptor(bndl.ID); err != nil {
+	if _, err := store.GetStoreSingleton().GetBundleDescriptor(bid); err != nil {
 		return err
 	}
 
@@ -123,7 +99,7 @@ func (mailbox *Mailbox) Get(bid bpv7.BundleID, remove bool) (*bpv7.Bundle, error
 		return nil, NewNoSuchBundleError(bid)
 	}
 
-	bd, err := store.GetStoreSingleton().LoadBundleDescriptor(bid)
+	bd, err := store.GetStoreSingleton().GetBundleDescriptor(bid)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +133,7 @@ func (mailbox *Mailbox) GetAll(remove bool) ([]*bpv7.Bundle, error) {
 
 	bndls := make([]*bpv7.Bundle, 0, len(mailbox.messages))
 	for bid := range mailbox.messages {
-		bd, err := store.GetStoreSingleton().LoadBundleDescriptor(bid)
+		bd, err := store.GetStoreSingleton().GetBundleDescriptor(bid)
 		if err != nil {
 			return nil, err
 		}
@@ -197,7 +173,7 @@ func (mailbox *Mailbox) GetNew(remove bool) ([]*bpv7.Bundle, error) {
 			continue
 		}
 
-		bd, err := store.GetStoreSingleton().LoadBundleDescriptor(bid)
+		bd, err := store.GetStoreSingleton().GetBundleDescriptor(bid)
 		if err != nil {
 			return nil, err
 		}
@@ -235,12 +211,14 @@ func (mailbox *Mailbox) Clear() {
 // GC runs garbage collection on mailbox
 // Removes all bundles which can longer be loaded from the store (most likely because they have been deleted)
 func (mailbox *Mailbox) GC() {
+	log.Debug("Performing mailbox gc")
+
 	mailbox.rwMutex.Lock()
 	defer mailbox.rwMutex.Unlock()
 
 	for bid := range mailbox.messages {
-		_, err := store.GetStoreSingleton().LoadBundleDescriptor(bid)
-		if err != nil {
+		bd, err := store.GetStoreSingleton().GetBundleDescriptor(bid)
+		if err != nil || bd.Deleted() {
 			delete(mailbox.messages, bid)
 		}
 	}

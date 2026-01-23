@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Markus Sommer
+// SPDX-FileCopyrightText: 2025, 2026 Markus Sommer
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -24,8 +24,7 @@ func main() {
 	parser.ExitOnHelp(true)
 	address := parser.String("a", "address", &argparse.Options{
 		Help:     "UNIX socket",
-		Required: false,
-		Default:  "/tmp/dtnd.socket",
+		Required: true,
 	})
 
 	register := parser.NewCommand("register", "Register EndpointID")
@@ -218,7 +217,7 @@ func handleRegisterUnregister(connReader *bufio.Reader, connWriter *bufio.Writer
 		os.Exit(1)
 	}
 
-	if !reply.Success {
+	if reply.Error != "" {
 		_, _ = fmt.Fprintln(os.Stderr, reply.Error)
 		os.Exit(1)
 	} else {
@@ -322,25 +321,25 @@ func handleCreate(
 	msgBytes = make([]byte, msgLen)
 	// read reply into buffer
 	_, err = io.ReadFull(connReader, msgBytes)
-	reply := unix_agent.GeneralResponse{}
+	reply := unix_agent.BundleCreateResponse{}
 	err = msgpack.Unmarshal(msgBytes, &reply)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	if !reply.Success {
+	if reply.Error != "" {
 		_, _ = fmt.Fprintln(os.Stderr, reply.Error)
 		os.Exit(1)
 	} else {
-		fmt.Println("Success")
+		fmt.Println(reply.BundleID)
 		os.Exit(0)
 	}
 }
 
 func handleList(connReader *bufio.Reader, connWriter *bufio.Writer, mailboxID string, new bool) {
-	msg := unix_agent.MailboxListMessage{
-		Message: unix_agent.Message{Type: unix_agent.MsgTypeList},
+	msg := unix_agent.ListBundles{
+		Message: unix_agent.Message{Type: unix_agent.MsgTypeListBundles},
 		Mailbox: mailboxID,
 		New:     new,
 	}
@@ -390,14 +389,14 @@ func handleList(connReader *bufio.Reader, connWriter *bufio.Writer, mailboxID st
 	msgBytes = make([]byte, msgLen)
 	// read reply into buffer
 	_, err = io.ReadFull(connReader, msgBytes)
-	reply := unix_agent.MailboxListResponse{}
+	reply := unix_agent.ListResponse{}
 	err = msgpack.Unmarshal(msgBytes, &reply)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	if !reply.Success {
+	if reply.Error != "" {
 		_, _ = fmt.Fprintln(os.Stderr, reply.Error)
 		os.Exit(1)
 	} else {
@@ -407,8 +406,8 @@ func handleList(connReader *bufio.Reader, connWriter *bufio.Writer, mailboxID st
 }
 
 func handleGetBundle(connReader *bufio.Reader, connWriter *bufio.Writer, mailboxID, bundleID, output string, remove bool) {
-	msg := unix_agent.GetBundleMessage{
-		Message:  unix_agent.Message{Type: unix_agent.MsgTypeGetBundle},
+	msg := unix_agent.FetchBundle{
+		Message:  unix_agent.Message{Type: unix_agent.MsgTypeFetchBundle},
 		Mailbox:  mailboxID,
 		BundleID: bundleID,
 		Remove:   remove,
@@ -459,19 +458,19 @@ func handleGetBundle(connReader *bufio.Reader, connWriter *bufio.Writer, mailbox
 	msgBytes = make([]byte, msgLen)
 	// read reply into buffer
 	_, err = io.ReadFull(connReader, msgBytes)
-	reply := unix_agent.GetBundleResponse{}
+	reply := unix_agent.FetchBundleResponse{}
 	err = msgpack.Unmarshal(msgBytes, &reply)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	if !reply.Success {
+	if reply.Error != "" {
 		_, _ = fmt.Fprintln(os.Stderr, reply.Error)
 		os.Exit(1)
 	} else {
 		if output == "stdout" {
-			_, _ = fmt.Print(string(reply.Payload))
+			_, _ = fmt.Print(string(reply.BundleContent.Payload))
 		} else {
 			file, err := os.Create(output)
 			if err != nil {
@@ -479,7 +478,7 @@ func handleGetBundle(connReader *bufio.Reader, connWriter *bufio.Writer, mailbox
 				os.Exit(1)
 			}
 			defer file.Close()
-			_, err = file.Write(reply.Payload)
+			_, err = file.Write(reply.BundleContent.Payload)
 			if err != nil {
 				_, _ = fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
@@ -490,8 +489,8 @@ func handleGetBundle(connReader *bufio.Reader, connWriter *bufio.Writer, mailbox
 }
 
 func handleGetAllBundles(connReader *bufio.Reader, connWriter *bufio.Writer, mailboxID string, new bool, remove bool) {
-	msg := unix_agent.GetAllBundlesMessage{
-		Message: unix_agent.Message{Type: unix_agent.MsgTypeGetAllBundles},
+	msg := unix_agent.FetchAllBundles{
+		Message: unix_agent.Message{Type: unix_agent.MsgTypeFetchAllBundles},
 		Mailbox: mailboxID,
 		New:     new,
 		Remove:  remove,
@@ -542,14 +541,14 @@ func handleGetAllBundles(connReader *bufio.Reader, connWriter *bufio.Writer, mai
 	msgBytes = make([]byte, msgLen)
 	// read reply into buffer
 	_, err = io.ReadFull(connReader, msgBytes)
-	reply := unix_agent.GetAllBundlesResponse{}
+	reply := unix_agent.FetchAllBundlesResponse{}
 	err = msgpack.Unmarshal(msgBytes, &reply)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	if !reply.Success {
+	if reply.Error != "" {
 		_, _ = fmt.Fprintln(os.Stderr, reply.Error)
 		os.Exit(1)
 	} else {

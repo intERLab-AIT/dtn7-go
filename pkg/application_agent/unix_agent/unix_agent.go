@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Markus Sommer
+// SPDX-FileCopyrightText: 2025, 2026 Markus Sommer
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -8,6 +8,7 @@ package unix_agent
 import (
 	"bufio"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -42,12 +43,8 @@ func NewUNIXAgent(listenAddress string) (*UNIXAgent, error) {
 	return &agent, nil
 }
 
-func (agent *UNIXAgent) Shutdown() {
-	log.WithField("listenAddress", agent.listenAddress).Info("Shutting agent down")
-	close(agent.stopChan)
-	f, _ := agent.listener.File()
-	_ = f.Close()
-	_ = agent.listener.Close()
+func (agent *UNIXAgent) Name() string {
+	return fmt.Sprintf("UNIXAgent(%v)", agent.listenAddress)
 }
 
 func (agent *UNIXAgent) Endpoints() []bpv7.EndpointID {
@@ -72,6 +69,19 @@ func (agent *UNIXAgent) Start() error {
 	go agent.listen()
 
 	return nil
+}
+
+func (agent *UNIXAgent) Shutdown() {
+	log.WithField("listenAddress", agent.listenAddress).Info("Shutting agent down")
+	close(agent.stopChan)
+	f, _ := agent.listener.File()
+	_ = f.Close()
+	_ = agent.listener.Close()
+}
+
+func (agent *UNIXAgent) GC() {
+	log.WithField("agent", agent.Name()).Debug("Performing gc")
+	agent.mailboxes.GC()
 }
 
 func (agent *UNIXAgent) listen() {
@@ -107,22 +117,30 @@ func (agent *UNIXAgent) handleConnection(conn net.Conn) {
 
 	msgLenBytes := make([]byte, 8)
 	log.Debug("Receiving message length")
-	_, err := io.ReadFull(connReader, msgLenBytes)
+	bytesRead, err := io.ReadFull(connReader, msgLenBytes)
 	if err != nil {
-		log.WithField("error", err).Error("Failed reading 8-byte message length")
+		log.WithFields(log.Fields{
+			"error":      err,
+			"bytes read": bytesRead,
+		}).Error("Failed reading 8-byte message length")
 		return
 	}
+	log.WithField("bytes read", bytesRead).Debug("Received message length")
 
 	msgLen := binary.BigEndian.Uint64(msgLenBytes)
-	log.WithField("msgLength", msgLen).Debug("Received msgLength")
+	log.WithField("msgLength", msgLen).Debug("Decoded message length")
 
 	log.Debug("Receiving message")
 	msgBytes := make([]byte, msgLen)
-	_, err = io.ReadFull(connReader, msgBytes)
+	bytesRead, err = io.ReadFull(connReader, msgBytes)
 	if err != nil {
-		log.WithField("error", err).Error("Failed reading message")
+		log.WithFields(log.Fields{
+			"error":      err,
+			"bytes read": bytesRead,
+		}).Error("Failed reading message")
 		return
 	}
+	log.WithField("bytes read", bytesRead).Debug("Received message")
 
 	log.Debug("Unmarshalling message")
 	message := Message{}
@@ -161,8 +179,8 @@ func (agent *UNIXAgent) handleConnection(conn net.Conn) {
 			log.WithField("error", err).Error("Error handling Bundle create message")
 			return
 		}
-	case MsgTypeList:
-		typedMessage := MailboxListMessage{}
+	case MsgTypeListBundles:
+		typedMessage := ListBundles{}
 		err = msgpack.Unmarshal(msgBytes, &typedMessage)
 		if err != nil {
 			log.WithField("error", err).Error("Failed unmarshalling list message")
@@ -173,8 +191,8 @@ func (agent *UNIXAgent) handleConnection(conn net.Conn) {
 			log.WithField("error", err).Error("Error handling list message")
 			return
 		}
-	case MsgTypeGetBundle:
-		typedMessage := GetBundleMessage{}
+	case MsgTypeFetchBundle:
+		typedMessage := FetchBundle{}
 		err = msgpack.Unmarshal(msgBytes, &typedMessage)
 		if err != nil {
 			log.WithField("error", err).Error("Failed unmarshalling get message")
@@ -185,8 +203,8 @@ func (agent *UNIXAgent) handleConnection(conn net.Conn) {
 			log.WithField("error", err).Error("Error handling get message")
 			return
 		}
-	case MsgTypeGetAllBundles:
-		typedMessage := GetAllBundlesMessage{}
+	case MsgTypeFetchAllBundles:
+		typedMessage := FetchAllBundles{}
 		err = msgpack.Unmarshal(msgBytes, &typedMessage)
 		if err != nil {
 			log.WithField("error", err).Error("Failed unmarshalling GetAll message")
@@ -203,6 +221,7 @@ func (agent *UNIXAgent) handleConnection(conn net.Conn) {
 	}
 
 	replyLength := uint64(len(replyBytes))
+	log.WithField("length", replyLength).Debug("Marshaled Reply")
 	replyLengthBytes := make([]byte, 8)
 	_, err = binary.Encode(replyLengthBytes, binary.BigEndian, replyLength)
 	if err != nil {
@@ -210,21 +229,32 @@ func (agent *UNIXAgent) handleConnection(conn net.Conn) {
 		return
 	}
 
-	_, err = connWriter.Write(replyLengthBytes)
+	bytesWritten, err := connWriter.Write(replyLengthBytes)
 	if err != nil {
-		log.WithField("error", err).Error("Error sending reply length")
+		log.WithFields(log.Fields{
+			"error":         err,
+			"bytes written": bytesWritten,
+		}).Error("Error sending reply")
 		return
 	}
-	_, err = connWriter.Write(replyBytes)
+	log.WithField("bytes written", bytesWritten).Debug("Sent reply length")
+
+	bytesWritten, err = connWriter.Write(replyBytes)
 	if err != nil {
-		log.WithField("error", err).Error("Error sending reply")
+		log.WithFields(log.Fields{
+			"error":         err,
+			"bytes written": bytesWritten,
+		}).Error("Error sending reply")
 		return
 	}
+	log.WithField("bytes written", bytesWritten).Debug("Sent reply")
+
 	err = connWriter.Flush()
 	if err != nil {
 		log.WithField("error", err).Error("Error flushing send buffer")
 		return
 	}
+	log.Debug("Flushed send buffer - done")
 }
 
 func (agent *UNIXAgent) handleRegisterUnregister(message *RegisterUnregisterMessage, register bool) ([]byte, error) {
@@ -236,7 +266,6 @@ func (agent *UNIXAgent) handleRegisterUnregister(message *RegisterUnregisterMess
 
 	response := GeneralResponse{
 		Message: Message{Type: MsgTypeGeneralResponse},
-		Success: true,
 		Error:   "",
 	}
 	failure := false
@@ -244,7 +273,6 @@ func (agent *UNIXAgent) handleRegisterUnregister(message *RegisterUnregisterMess
 	eid, err := bpv7.NewEndpointID(message.EndpointID)
 	if err != nil {
 		failure = true
-		response.Success = false
 		response.Error = err.Error()
 		log.WithFields(log.Fields{
 			"eid":   message.EndpointID,
@@ -261,7 +289,6 @@ func (agent *UNIXAgent) handleRegisterUnregister(message *RegisterUnregisterMess
 	}
 	if err != nil {
 		failure = true
-		response.Success = false
 		response.Error = err.Error()
 		log.WithFields(log.Fields{
 			"eid":   message.EndpointID,
@@ -282,10 +309,12 @@ func (agent *UNIXAgent) handleRegisterUnregister(message *RegisterUnregisterMess
 func (agent *UNIXAgent) handleBundleCreate(message *BundleCreateMessage) ([]byte, error) {
 	log.Debug("Handling bundle create")
 
-	response := GeneralResponse{
-		Message: Message{Type: MsgTypeGeneralResponse},
-		Success: true,
-		Error:   "",
+	response := BundleCreateResponse{
+		GeneralResponse: GeneralResponse{
+			Message: Message{Type: MsgTypeBundleCreateResponse},
+			Error:   "",
+		},
+		BundleID: "",
 	}
 
 	failed := false
@@ -293,13 +322,13 @@ func (agent *UNIXAgent) handleBundleCreate(message *BundleCreateMessage) ([]byte
 	if err != nil {
 		log.WithField("error", err).Debug("Error building bundle")
 		failed = true
-		response.Success = false
 		response.Error = err.Error()
 	}
 
 	if !failed {
 		log.WithField("bundle", bundle).Debug("Handing bundle over to manager")
-		application_agent.GetManagerSingleton().Send(bundle)
+		bundleId := application_agent.GetManagerSingleton().Send(bundle)
+		response.BundleID = bundleId.String()
 	}
 
 	log.Debug("Marshaling response")
@@ -312,13 +341,12 @@ func (agent *UNIXAgent) handleBundleCreate(message *BundleCreateMessage) ([]byte
 	return responseBytes, nil
 }
 
-func (agent *UNIXAgent) handleMailboxList(message *MailboxListMessage) ([]byte, error) {
+func (agent *UNIXAgent) handleMailboxList(message *ListBundles) ([]byte, error) {
 	log.Debug("Handling mailbox list")
 
-	response := MailboxListResponse{
+	response := ListResponse{
 		GeneralResponse: GeneralResponse{
 			Message: Message{Type: MsgTypeListResponse},
-			Success: true,
 			Error:   "",
 		},
 		Bundles: make([]string, 0),
@@ -328,7 +356,6 @@ func (agent *UNIXAgent) handleMailboxList(message *MailboxListMessage) ([]byte, 
 	eid, err := bpv7.NewEndpointID(message.Mailbox)
 	if err != nil {
 		failure = true
-		response.Success = false
 		response.Error = err.Error()
 		log.WithFields(log.Fields{
 			"eid":   message.Mailbox,
@@ -341,7 +368,6 @@ func (agent *UNIXAgent) handleMailboxList(message *MailboxListMessage) ([]byte, 
 		mailbox, err = agent.mailboxes.GetMailbox(eid)
 		if err != nil {
 			failure = true
-			response.Success = false
 			response.Error = err.Error()
 			log.WithFields(log.Fields{
 				"eid":   message.Mailbox,
@@ -378,12 +404,11 @@ func (agent *UNIXAgent) handleMailboxList(message *MailboxListMessage) ([]byte, 
 	return responseBytes, nil
 }
 
-func (agent *UNIXAgent) handleGetBundle(message *GetBundleMessage) ([]byte, error) {
+func (agent *UNIXAgent) handleGetBundle(message *FetchBundle) ([]byte, error) {
 	log.Debug("Handling get bundle")
-	response := GetBundleResponse{
+	response := FetchBundleResponse{
 		GeneralResponse: GeneralResponse{
-			Message: Message{Type: MsgTypeGetBundleResponse},
-			Success: true,
+			Message: Message{Type: MsgTypeFetchBundleResponse},
 			Error:   "",
 		},
 		BundleContent: BundleContent{},
@@ -393,7 +418,6 @@ func (agent *UNIXAgent) handleGetBundle(message *GetBundleMessage) ([]byte, erro
 	mid, err := bpv7.NewEndpointID(message.Mailbox)
 	if err != nil {
 		failure = true
-		response.Success = false
 		response.Error = err.Error()
 		log.WithFields(log.Fields{
 			"bid":   message.Mailbox,
@@ -406,7 +430,6 @@ func (agent *UNIXAgent) handleGetBundle(message *GetBundleMessage) ([]byte, erro
 		mailbox, err = agent.mailboxes.GetMailbox(mid)
 		if err != nil {
 			failure = true
-			response.Success = false
 			response.Error = err.Error()
 			log.WithFields(log.Fields{
 				"eid":   message.Mailbox,
@@ -420,7 +443,6 @@ func (agent *UNIXAgent) handleGetBundle(message *GetBundleMessage) ([]byte, erro
 		bid, err = bpv7.NewBundleID(message.BundleID)
 		if err != nil {
 			failure = true
-			response.Success = false
 			response.Error = err.Error()
 			log.WithFields(log.Fields{
 				"eid":   message.Mailbox,
@@ -433,17 +455,16 @@ func (agent *UNIXAgent) handleGetBundle(message *GetBundleMessage) ([]byte, erro
 		bundle, err := mailbox.Get(bid, message.Remove)
 		if err != nil {
 			failure = true
-			response.Success = false
 			response.Error = err.Error()
 			log.WithFields(log.Fields{
 				"eid":   message.Mailbox,
 				"error": err,
 			}).Debug("Error retrieving bundle")
 		} else {
-			response.BundleID = bundle.ID().String()
-			response.SourceID = bundle.PrimaryBlock.SourceNode.String()
-			response.DestinationID = bundle.PrimaryBlock.Destination.String()
-			response.Payload = *bundle.PayloadBlock.Value.(*bpv7.PayloadBlock)
+			response.BundleContent.BundleID = bundle.ID().String()
+			response.BundleContent.SourceID = bundle.PrimaryBlock.SourceNode.String()
+			response.BundleContent.DestinationID = bundle.PrimaryBlock.Destination.String()
+			response.BundleContent.Payload = *bundle.PayloadBlock.Value.(*bpv7.PayloadBlock)
 		}
 	}
 
@@ -457,12 +478,11 @@ func (agent *UNIXAgent) handleGetBundle(message *GetBundleMessage) ([]byte, erro
 	return responseBytes, nil
 }
 
-func (agent *UNIXAgent) handleGetAllBundles(message *GetAllBundlesMessage) ([]byte, error) {
+func (agent *UNIXAgent) handleGetAllBundles(message *FetchAllBundles) ([]byte, error) {
 	log.Debug("Handling get all bundles")
-	response := GetAllBundlesResponse{
+	response := FetchAllBundlesResponse{
 		GeneralResponse: GeneralResponse{
-			Message: Message{Type: MsgTypeGetAllBundlesResponse},
-			Success: true,
+			Message: Message{Type: MsgTypeFetchAllBundlesResponse},
 			Error:   "",
 		},
 		Bundles: make([]BundleContent, 0),
@@ -472,7 +492,6 @@ func (agent *UNIXAgent) handleGetAllBundles(message *GetAllBundlesMessage) ([]by
 	mid, err := bpv7.NewEndpointID(message.Mailbox)
 	if err != nil {
 		failure = true
-		response.Success = false
 		response.Error = err.Error()
 		log.WithFields(log.Fields{
 			"bid":   message.Mailbox,
@@ -485,7 +504,6 @@ func (agent *UNIXAgent) handleGetAllBundles(message *GetAllBundlesMessage) ([]by
 		mailbox, err = agent.mailboxes.GetMailbox(mid)
 		if err != nil {
 			failure = true
-			response.Success = false
 			response.Error = err.Error()
 			log.WithFields(log.Fields{
 				"eid":   message.Mailbox,
@@ -503,7 +521,6 @@ func (agent *UNIXAgent) handleGetAllBundles(message *GetAllBundlesMessage) ([]by
 		}
 		if err != nil {
 			failure = true
-			response.Success = false
 			response.Error = err.Error()
 			log.WithFields(log.Fields{
 				"eid":   message.Mailbox,

@@ -77,10 +77,8 @@ type RestAgent struct {
 	listenAddress string
 
 	// map UUIDs to EIDs and received bundles
-	clients          sync.Map // uuid[string] -> bpv7.EndpointID
-	mailboxes        *application_agent.MailboxBank
-	pendingMailboxes map[string]map[bpv7.BundleID]bpv7.Bundle // For late registration support
-	mailboxMutex     sync.Mutex
+	clients   sync.Map // uuid[string] -> bpv7.EndpointID
+	mailboxes *application_agent.MailboxBank
 }
 
 func NewRestAgent(prefix, listenAddress string) (ra *RestAgent) {
@@ -88,10 +86,9 @@ func NewRestAgent(prefix, listenAddress string) (ra *RestAgent) {
 	restRouter := r.PathPrefix(prefix).Subrouter()
 
 	ra = &RestAgent{
-		router:           restRouter,
-		listenAddress:    listenAddress,
-		mailboxes:        application_agent.NewMailboxBank(),
-		pendingMailboxes: make(map[string]map[bpv7.BundleID]bpv7.Bundle),
+		router:        restRouter,
+		listenAddress: listenAddress,
+		mailboxes:     application_agent.NewMailboxBank(),
 	}
 
 	ra.router.HandleFunc("/register", ra.handleRegister).Methods(http.MethodPost)
@@ -129,51 +126,7 @@ func (ra *RestAgent) GC() {
 
 // Deliver checks incoming BundleMessages and puts them in a mailbox.
 func (ra *RestAgent) Deliver(bundleDescriptor *store.BundleDescriptor) error {
-	// First try to deliver to registered mailboxes
-	err := ra.mailboxes.Deliver(bundleDescriptor)
-	if err != nil {
-		// If no registered mailbox, check if any clients are listening for this destination
-		var uuids []string
-		ra.clients.Range(func(k, v interface{}) bool {
-			if bundleDescriptor.Destination == v.(bpv7.EndpointID) {
-				uuids = append(uuids, k.(string))
-			}
-			return true // multiple clients might be registered for some endpoint
-		})
-
-		if len(uuids) > 0 {
-			// Late registration: deliver to pending clients
-			ra.mailboxMutex.Lock()
-			bndl, loadErr := bundleDescriptor.Load()
-			if loadErr != nil {
-				ra.mailboxMutex.Unlock()
-				return loadErr
-			}
-			for _, uuid := range uuids {
-				mailbox, exists := ra.pendingMailboxes[uuid]
-				if !exists {
-					mailbox = map[bpv7.BundleID]bpv7.Bundle{bundleDescriptor.ID: *bndl}
-					ra.pendingMailboxes[uuid] = mailbox
-					log.WithFields(log.Fields{
-						"bundle": bundleDescriptor.ID.String(),
-						"uuid":   uuid,
-					}).Debug("REST Application Agent delivering message to pending client's inbox")
-				} else {
-					_, exists = mailbox[bundleDescriptor.ID]
-					if !exists {
-						mailbox[bundleDescriptor.ID] = *bndl
-						log.WithFields(log.Fields{
-							"bundle": bundleDescriptor.ID.String(),
-							"uuid":   uuid,
-						}).Debug("REST Application Agent delivering message to pending client's inbox")
-					}
-				}
-			}
-			ra.mailboxMutex.Unlock()
-			return nil
-		}
-	}
-	return err
+	return ra.mailboxes.Deliver(bundleDescriptor)
 }
 
 // randomUuid to be used for authentication. UUID not compliant with RFC 4122.
@@ -206,27 +159,18 @@ func (ra *RestAgent) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 		// Deliver any pending bundles for this endpoint (late registration support)
 		if pendingBundles, err := store.GetStoreSingleton().GetByDestination(eid); err == nil && len(pendingBundles) > 0 {
-			ra.mailboxMutex.Lock()
-			mailbox := make(map[bpv7.BundleID]bpv7.Bundle)
+			log.WithFields(log.Fields{
+				"count": len(pendingBundles),
+				"eid":   eid.String(),
+			}).Info("Delivering pending bundles to late-registered REST client")
 			for _, bundleDescriptor := range pendingBundles {
-				if bndl, loadErr := bundleDescriptor.Load(); loadErr == nil {
-					mailbox[bundleDescriptor.ID] = *bndl
+				if deliverErr := ra.mailboxes.Deliver(bundleDescriptor); deliverErr != nil {
 					log.WithFields(log.Fields{
-						"bundle": bundleDescriptor.ID.String(),
-						"uuid":   uuid,
-						"eid":    eid.String(),
-					}).Info("Delivering pending bundle to late-registered REST client")
-				} else {
-					log.WithFields(log.Fields{
-						"bundle": bundleDescriptor.ID.String(),
-						"error":  loadErr,
-					}).Warn("Failed to load pending bundle for late registration")
+						"bundle": bundleDescriptor.ID().String(),
+						"error":  deliverErr,
+					}).Warn("Failed to deliver pending bundle for late registration")
 				}
 			}
-			if len(mailbox) > 0 {
-				ra.mailboxes[uuid] = mailbox
-			}
-			ra.mailboxMutex.Unlock()
 		}
 	}
 

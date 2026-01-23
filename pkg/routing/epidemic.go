@@ -32,7 +32,7 @@ func (er *EpidemicRouting) NotifyNewBundle(_ *store.BundleDescriptor) {}
 
 func (er *EpidemicRouting) SelectPeersForForwarding(bp *store.BundleDescriptor) (css []cla.ConvergenceSender) {
 	allSenders := cla.GetManagerSingleton().GetSenders()
-	alreadySent := bp.GetAlreadySent()
+	alreadySent, _ := bp.GetKnownHolders()
 
 	css = filterCLAs(bp, allSenders)
 

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -59,6 +60,9 @@ func (agent *UNIXAgent) Start() error {
 	log.WithFields(log.Fields{
 		"address": agent.listenAddress,
 	}).Info("Starting UNIXAgent")
+
+	// Remove existing socket file if it exists
+	os.Remove(agent.listenAddress.String())
 
 	listener, err := net.ListenUnix("unix", agent.listenAddress)
 	if err != nil {

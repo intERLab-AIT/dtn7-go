@@ -223,17 +223,6 @@ func startDtnd(conf config) (startupErrors error) {
 		startupErrors = errors.Join(startupErrors, err)
 	}
 
-	if conf.Agents.UNIX.Socket != "" {
-		unixAgent, err := unix_agent.NewUNIXAgent(conf.Agents.UNIX.Socket)
-		if err != nil {
-			log.WithError(err).Fatal("Error creating UNIX application agent")
-		}
-		err = application_agent.GetManagerSingleton().RegisterAgent(unixAgent)
-		if err != nil {
-			log.WithError(err).Fatal("Error registering UNIX application agent")
-		}
-	}
-
 	s.Start()
 	return
 }

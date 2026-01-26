@@ -59,4 +59,5 @@ restart_interval = 20
 #endpoint_id = "dtn://peer2/"
 
 [Cron]
-dispatch ="10s"
+dispatch = "10s"
+gc = "1h"

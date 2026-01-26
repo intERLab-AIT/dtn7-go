@@ -1,0 +1,63 @@
+node_id = "dtn://node0/"
+log_level = "Debug"
+
+# Resource limits
+[Resource]
+# Soft memory limit in bytes (0 = unlimited)
+# Examples: 268435456 (256MB), 536870912 (512MB), 1073741824 (1GB)
+# Recommended for embedded/IoT devices to prevent OOM
+#memory_limit = 536870912
+
+[Store]
+path = "/tmp/dtn_store"
+# Memory-optimized settings for embedded/IoT devices like Raspberry Pi
+# Total estimated memory usage: ~150MB (down from ~600MB default)
+#ValueLogFileSize = 67108864    # 64MB per value log file (default: 1GB)
+#MemTableSize = 16777216         # 16MB per memtable (default: 64MB)
+#NumMemtables = 2                # Number of memtables in memory (default: 5)
+                                # Total memtable memory: 16MB × 2 = 32MB
+#BlockCacheSize = 67108864       # 64MB block cache for SSTable blocks (default: 256MB)
+#IndexCacheSize = 33554432       # 32MB cache for table indices (default: unlimited)
+#ValueThreshold = 262144         # 256KB - values larger go to value log (default: 1MB)
+
+# Specify routing algorithm
+[Routing]
+algorithm = "epidemic"
+
+[Agents]
+[Agents.REST]
+# Address to bind the server to.
+address = "localhost:8080"
+
+[Agents.UNIX]
+# path to the communication socket
+socket = "/tmp/dtnd.socket"
+
+#[[Listener]]
+#type = "QUICL"
+#address = ":35037"
+
+# Add a TCP listener
+[[Listener]]
+type = "MTCP"
+address = ":4556"
+
+[Discovery]
+restart_interval = 20
+#use_broadcast = true
+#broadcast_address = "192.168.49.255"
+
+# Static peers - persistent connections to specific IP
+#[[Peer]]
+#type = "MTCP"
+#address = "192.168.1.100:4556"
+#endpoint_id = "dtn://peer1/"
+
+#[[Peer]]
+#type = "MTCP"
+#address = "10.0.0.5:4556"
+#endpoint_id = "dtn://peer2/"
+
+[Cron]
+dispatch = "10s"
+gc = "1h"

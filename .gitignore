@@ -133,7 +133,7 @@ tags
 /conf*.toml
 /store*
 
-Rapid testing framework
+# Rapid testing framework
 *.fail
 cmd/dtnd/dtnd
 cmd/dtnd/dtnclient

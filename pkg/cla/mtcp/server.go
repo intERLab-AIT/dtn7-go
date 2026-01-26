@@ -57,6 +57,8 @@ func (serv *MTCPServer) Start() error {
 		return err
 	}
 
+	serv.running = true
+
 	go func(ln *net.TCPListener) {
 		for {
 			select {
@@ -146,6 +148,9 @@ func (serv *MTCPServer) handleSender(conn net.Conn) {
 }
 
 func (serv *MTCPServer) Close() error {
+	if !serv.running {
+		return nil
+	}
 	close(serv.stopSyn)
 	<-serv.stopAck
 

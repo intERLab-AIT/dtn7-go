@@ -228,6 +228,12 @@ func startDtnd(conf config) (startupErrors error) {
 }
 
 func stopDtnd() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.WithField("panic", r).Debug("Recovered from panic during shutdown")
+		}
+	}()
+
 	discovery.GetManagerSingleton().Shutdown()
 	cla.GetManagerSingleton().Shutdown()
 	application_agent.GetManagerSingleton().Shutdown()

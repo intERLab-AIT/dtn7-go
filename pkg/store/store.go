@@ -71,10 +71,10 @@ func InitialiseStore(nodeID bpv7.EndpointID, path string, cfg Config) error {
 	if cfg.NumMemtables > 0 {
 		opts.NumMemtables = cfg.NumMemtables
 	}
-	if cfg.BlockCacheSize >= 0 {
+	if cfg.BlockCacheSize > 0 {
 		opts.BlockCacheSize = cfg.BlockCacheSize
 	}
-	if cfg.IndexCacheSize >= 0 {
+	if cfg.IndexCacheSize > 0 {
 		opts.IndexCacheSize = cfg.IndexCacheSize
 	}
 	if cfg.ValueThreshold > 0 {

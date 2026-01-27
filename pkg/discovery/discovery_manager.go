@@ -65,8 +65,10 @@ func InitialiseManager(
 	useBroadcast bool, broadcastAddr string,
 	restartDurationSeconds int,
 	receiveCallback func(*bpv7.Bundle)) error {
-	if managerSingleton != nil {
-		log.Fatalf("Attempting to access an uninitialised discovery manager. This must never happen!")
+	if managerSingleton == nil {
+		// Manager not yet initialized, proceed with initialization
+	} else {
+		log.Fatalf("Attempting to initialise discovery manager twice. This must never happen!")
 	}
 
 	var restartDuration time.Duration

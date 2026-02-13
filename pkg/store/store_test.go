@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -26,7 +27,7 @@ func initTest(t *rapid.T) {
 }
 
 func cleanupTest(t *rapid.T) {
-	err := GetStoreSingleton().Shutdown()
+	err := ShutdownStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +43,7 @@ func TestBundleInsertion(t *testing.T) {
 		defer cleanupTest(t)
 
 		bundle := bpv7.GenerateRandomizedBundle(t, 0)
-		bd, err := GetStoreSingleton().insertNewBundle(bundle)
+		bd, err := GetStoreSingleton().InsertBundle(bundle)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,13 +68,46 @@ func TestBundleInsertion(t *testing.T) {
 	})
 }
 
+func TestBundleDeletion(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		initTest(t)
+		defer cleanupTest(t)
+
+		bundle := bpv7.GenerateRandomizedBundle(t, 0)
+		bd, err := GetStoreSingleton().InsertBundle(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = bd.ResetConstraints()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = bd.Delete(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !bd.Deleted() {
+			t.Fatal("Bundle not marked as deleted")
+		}
+
+		_, err = GetStoreSingleton().GetBundleDescriptor(bundle.ID())
+		target := &NoSuchBundleError{}
+		if !errors.As(err, &target) {
+			t.Fatal("Bundle exists after deletion")
+		}
+	})
+}
+
 func TestConstraints(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		initTest(t)
 		defer cleanupTest(t)
 
 		bundle := bpv7.GenerateRandomizedBundle(t, 0)
-		bd, err := GetStoreSingleton().insertNewBundle(bundle)
+		bd, err := GetStoreSingleton().InsertBundle(bundle)
 		if err != nil {
 			t.Fatal(err)
 		}

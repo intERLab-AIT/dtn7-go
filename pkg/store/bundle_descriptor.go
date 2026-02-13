@@ -51,6 +51,8 @@ type BundleDescriptor struct {
 	dispatch bool
 	// has this bundle been deleted
 	deleted bool
+	// set to indicate that bundle should be deleted when possible
+	shouldDelete bool
 }
 
 func NewBundleDescriptor(metadata BundleMetadata) *BundleDescriptor {
@@ -160,7 +162,8 @@ func (bd *BundleDescriptor) AddConstraint(constraint Constraint) error {
 	return nil
 }
 
-// RemoveConstraint removes a Constraint from this bundle and checks if it should be retained/dispatched.
+// RemoveConstraint removes a Constraint from this bundle, checks if it should be retained/dispatched and
+// deletes it if shouldDelete is set and no constraints are left.
 // If bundle has been deleted, returns BundleDeletedError
 func (bd *BundleDescriptor) RemoveConstraint(constraint Constraint) error {
 	bd.stateMutex.Lock()
@@ -186,10 +189,15 @@ func (bd *BundleDescriptor) RemoveConstraint(constraint Constraint) error {
 	bd.retentionConstraints = constraints
 	bd.retain = len(bd.retentionConstraints) > 0
 
+	if !bd.retain && bd.shouldDelete {
+		_ = bd.unsafeDelete()
+	}
+
 	return nil
 }
 
-// ResetConstraints removes all Constraints from this bundle.
+// ResetConstraints removes all Constraints from this bundle and
+// deletes it if shouldDelete is set and no constraints are left.
 // If bundle has been deleted, returns BundleDeletedError
 func (bd *BundleDescriptor) ResetConstraints() error {
 	bd.stateMutex.Lock()
@@ -202,6 +210,10 @@ func (bd *BundleDescriptor) ResetConstraints() error {
 	bd.retentionConstraints = make([]Constraint, 0)
 	bd.retain = false
 	bd.dispatch = true
+
+	if bd.shouldDelete {
+		_ = bd.unsafeDelete()
+	}
 
 	return nil
 }
@@ -250,24 +262,39 @@ func (bd *BundleDescriptor) Deleted() bool {
 	return bd.deleted
 }
 
-// Delete deletes this BundleDescriptor's underlying Bundle
-// Returns BundleDeletedError if bundle has already been deleted
-// Returns HasConstraintsError if bundle has retention constraints
-// Returns whatever errors badgerhold returns, when something goes wrong...
-func (bd *BundleDescriptor) Delete() error {
-	bd.stateMutex.Lock()
-	defer bd.stateMutex.Unlock()
-
+// unsafeDelete performs the actual bundle deletion.
+// This method is NOT threadsafe - you must have locked the stateMutex BEFORE calling this.
+func (bd *BundleDescriptor) unsafeDelete() error {
 	if bd.deleted {
 		return NewBundleDeletedError(bd.metadata.ID)
 	}
 
+	bd.deleted = true
+	go GetStoreSingleton().deleteBundle(bd.metadata)
+	return nil
+}
+
+// Delete tries to delete this BundleDescriptor's underlying Bundle.
+// If a bundle has retention constraints, it must not be deleted
+//   - if markIfConstraint is true, then the bundle will be marked for deletion. It will then be deleted automatically when it loses its retention constraints. In this case no error will be returned.
+//   - if markIfConstraint is false, HasConstraintsError will be returned.
+//
+// Returns BundleDeletedError if bundle has already been deleted
+// Returns whatever errors badgerhold returns, when something goes wrong...
+func (bd *BundleDescriptor) Delete(markIfConstraint bool) error {
+	bd.stateMutex.Lock()
+	defer bd.stateMutex.Unlock()
+
 	if len(bd.retentionConstraints) > 0 {
+		if markIfConstraint {
+			bd.shouldDelete = true
+			return nil
+		}
+
 		return NewHasConstraintsError(bd.retentionConstraints)
 	}
 
-	bd.deleted = true
-	return GetStoreSingleton().deleteBundle(bd.metadata)
+	return bd.unsafeDelete()
 }
 
 // Expired tells, whether this bundle's expiry date has been passed
@@ -283,8 +310,6 @@ func (bd *BundleDescriptor) ID() bpv7.BundleID {
 }
 
 func (bd *BundleDescriptor) String() string {
-	bd.stateMutex.RLock()
-	defer bd.stateMutex.RUnlock()
-
+	// locking not necessary but leads to problems so do not do it
 	return bd.metadata.IDString
 }

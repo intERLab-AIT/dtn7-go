@@ -121,7 +121,14 @@ func GetManagerSingleton() *Manager {
 	return managerSingleton
 }
 
-func (manager *Manager) Shutdown() {
+func ShutdownDiscoveryManager() {
+	if managerSingleton == nil {
+		return
+	}
+	managerSingleton.shutdown()
+}
+
+func (manager *Manager) shutdown() {
 	managerSingleton = nil
 
 	for _, c := range []chan struct{}{manager.stopChan4, manager.stopChan6} {
@@ -175,6 +182,11 @@ func (manager *Manager) handleDiscovery(announcement Announcement, addr string) 
 		log.WithField("cType", announcement.Type).Error("Invalid cType")
 		return
 	}
+
+	if cla.GetManagerSingleton().CheckPresent(conv) {
+		return
+	}
+
 	cla.GetManagerSingleton().Register(conv)
 }
 

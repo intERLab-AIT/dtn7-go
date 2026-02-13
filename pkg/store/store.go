@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -108,8 +109,8 @@ func InitialiseStore(nodeID bpv7.EndpointID, path string, cfg Config) error {
 		return err
 	}
 	store.bundles = make(map[bpv7.BundleID]*BundleDescriptor, len(allBundles))
-	for _, bndl := range allBundles {
-		store.bundles[bndl.ID()] = bndl
+	for _, bundle := range allBundles {
+		store.bundles[bundle.ID()] = bundle
 	}
 
 	storeSingleton = &store
@@ -126,7 +127,21 @@ func GetStoreSingleton() *BundleStore {
 	return storeSingleton
 }
 
-func (bst *BundleStore) Shutdown() error {
+func ShutdownStore() error {
+	if storeSingleton == nil {
+		return nil
+	}
+	return storeSingleton.shutdown()
+}
+
+func closeWithError(c io.Closer) {
+	err := c.Close()
+	if err != nil {
+		log.WithError(err).Error("Error closing resource")
+	}
+}
+
+func (bst *BundleStore) shutdown() error {
 	log.Info("Shutting down store")
 	log.WithField("bundles", len(storeSingleton.bundles)).Debug("Bundles in store at shutdown")
 	storeSingleton = nil
@@ -148,24 +163,24 @@ func (bst *BundleStore) loadAll() ([]*BundleDescriptor, error) {
 	return descriptors, nil
 }
 
-// GetBundleDescriptor return BundleDescriptor for the given eid.
+// GetBundleDescriptor return BundleDescriptor for the given BundleID.
 // If no bundle with the given ID is in the store, method will return NoSuchBundleError
 func (bst *BundleStore) GetBundleDescriptor(bundleId bpv7.BundleID) (*BundleDescriptor, error) {
 	log.WithField("bid", bundleId).Debug("Getting BundleDescriptor from store")
 	bst.stateMutex.RLock()
 	defer bst.stateMutex.RUnlock()
-	bdesc, ok := bst.bundles[bundleId]
+	descriptor, ok := bst.bundles[bundleId]
 	if !ok {
 		log.WithField("bid", bundleId).Debug("Bundle not found")
 		return nil, NewNoSuchBundleError(bundleId)
-	} else {
-		if !bdesc.Deleted() {
-			return bdesc, nil
-		} else {
-			log.WithField("bid", bundleId).Debug("Bundle has been deleted")
-			return nil, NewNoSuchBundleError(bundleId)
-		}
 	}
+
+	if descriptor.Deleted() {
+		log.WithField("bid", bundleId).Debug("Bundle has been deleted")
+		return nil, NewNoSuchBundleError(bundleId)
+	}
+
+	return descriptor, nil
 }
 
 // GetWithConstraint loads all BundleDescriptors which have the given Constraint set.
@@ -227,14 +242,16 @@ func (bst *BundleStore) loadEntireBundle(filename string) (*bpv7.Bundle, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer closeWithError(f)
 
 	bundle, err := bpv7.ParseBundle(f)
 
 	return bundle, nil
 }
 
-func (bst *BundleStore) insertNewBundle(bundle *bpv7.Bundle) (*BundleDescriptor, error) {
+// insertNewBundleUnsafe stores a new bundle on disk and creates a new BundleDescriptor
+// This method is NOT threadsafe - you must have locked the stateMutex BEFORE calling this.
+func (bst *BundleStore) insertNewBundleUnsafe(bundle *bpv7.Bundle) (*BundleDescriptor, error) {
 	log.WithField("bundle", bundle.ID().String()).Debug("Inserting new bundle")
 	lifetimeDuration := time.Millisecond * time.Duration(bundle.PrimaryBlock.Lifetime)
 	serialisedFileName := fmt.Sprintf("%x", sha256.Sum256([]byte(bundle.ID().String())))
@@ -266,13 +283,12 @@ func (bst *BundleStore) insertNewBundle(bundle *bpv7.Bundle) (*BundleDescriptor,
 
 	serialisedPath := filepath.Join(bst.bundleDirectory, serialisedFileName)
 	f, err := os.Create(serialisedPath)
-	defer f.Close()
 	if err != nil {
 		log.WithFields(log.Fields{
 			"bundle": metadata.IDString,
 			"error":  err,
 		}).Error("Error opening file to store serialised bundle. Deleting...")
-		delErr := bst.deleteBundle(metadata)
+		delErr := bst.deleteFromDiskUnsafe(metadata)
 		if delErr != nil {
 			log.WithFields(log.Fields{
 				"bundle": metadata.IDString,
@@ -282,6 +298,7 @@ func (bst *BundleStore) insertNewBundle(bundle *bpv7.Bundle) (*BundleDescriptor,
 		}
 		return nil, err
 	}
+	defer closeWithError(f)
 
 	w := bufio.NewWriter(f)
 	err = cboring.Marshal(bundle, w)
@@ -296,7 +313,7 @@ func (bst *BundleStore) insertNewBundle(bundle *bpv7.Bundle) (*BundleDescriptor,
 	descriptor := NewBundleDescriptor(metadata)
 	bst.bundles[bundle.ID()] = descriptor
 
-	return NewBundleDescriptor(metadata), nil
+	return descriptor, nil
 }
 
 // InsertBundle inserts a bundle into the store.
@@ -314,7 +331,7 @@ func (bst *BundleStore) InsertBundle(bundle *bpv7.Bundle) (*BundleDescriptor, er
 	descriptor, ok := bst.bundles[bundle.ID()]
 	if !ok {
 		log.WithField("bundle", bundle.ID()).Debug("Bundle not in store")
-		return bst.insertNewBundle(bundle)
+		return bst.insertNewBundleUnsafe(bundle)
 	}
 
 	log.WithField("bundle", bundle.ID()).Debug("Bundle already exists, updating metadata")
@@ -334,8 +351,18 @@ func (bst *BundleStore) updateBundleMetadata(bundleMetadata BundleMetadata) erro
 	return bst.metadataStore.Update(bundleMetadata.IDString, bundleMetadata)
 }
 
+// deleteFromDiskUnsafe deletes bundle data & metadata from disk
+// This method is NOT threadsafe - you must have locked the stateMutex BEFORE calling this.
+func (bst *BundleStore) deleteFromDiskUnsafe(metadata BundleMetadata) error {
+	var multiErr *multierror.Error
+	multiErr = multierror.Append(multiErr, bst.metadataStore.Delete(metadata.IDString, metadata))
+	serialisedPath := filepath.Join(bst.bundleDirectory, metadata.SerialisedFileName)
+	multiErr = multierror.Append(multiErr, os.Remove(serialisedPath))
+	return multiErr.ErrorOrNil()
+}
+
 // deleteBundle deletes bundle from store map, metadata database and the serialized bundle from disk.
-func (bst *BundleStore) deleteBundle(metadata BundleMetadata) error {
+func (bst *BundleStore) deleteBundle(metadata BundleMetadata) {
 	log.WithField("bundle", metadata.ID).Debug("Deleting bundle")
 
 	bst.stateMutex.Lock()
@@ -343,11 +370,13 @@ func (bst *BundleStore) deleteBundle(metadata BundleMetadata) error {
 
 	delete(bst.bundles, metadata.ID)
 
-	var multiErr *multierror.Error
-	multiErr = multierror.Append(multiErr, bst.metadataStore.Delete(metadata.IDString, metadata))
-	serialisedPath := filepath.Join(bst.bundleDirectory, metadata.SerialisedFileName)
-	multiErr = multierror.Append(multiErr, os.Remove(serialisedPath))
-	return multiErr.ErrorOrNil()
+	err := bst.deleteFromDiskUnsafe(metadata)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"bundle": metadata.ID.String(),
+			"error":  err,
+		}).Error("Error deleting bundle")
+	}
 }
 
 // GarbageCollect deletes all bundles which are expired (their creation timestamp + lifetime is in the past)
@@ -359,9 +388,9 @@ func (bst *BundleStore) GarbageCollect() {
 
 	for _, bundle := range bst.bundles {
 		if bundle.Expired() && !bundle.Retain() {
-			err := bundle.Delete()
+			err := bundle.Delete(false)
 			if err != nil {
-				log.WithField("error", err).Error("Error deleting bundle")
+				log.WithField("error", err).Error("Error garbage collecting bundle")
 			}
 		}
 	}

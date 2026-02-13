@@ -29,13 +29,51 @@ type RestUnregisterResponse struct {
 
 // RestFetchRequest describes a JSON to be POSTed to /fetch.
 type RestFetchRequest struct {
-	UUID string `json:"uuid"`
+	UUID   string `json:"uuid"`
+	New    bool   `json:"new,omitempty"`    // Optional: fetch only new bundles (default: false)
+	Remove bool   `json:"remove,omitempty"` // Optional: remove after fetch (default: true for backward compatibility)
 }
 
 // RestFetchResponse describes a JSON response for /fetch.
 type RestFetchResponse struct {
 	Error   string        `json:"error"`
 	Bundles []bpv7.Bundle `json:"bundles"`
+}
+
+// RestListRequest describes a JSON to be POSTed to /list.
+type RestListRequest struct {
+	UUID string `json:"uuid"`
+	New  bool   `json:"new,omitempty"` // Optional: list only new bundles (default: false)
+}
+
+// RestListResponse describes a JSON response for /list.
+type RestListResponse struct {
+	Error   string   `json:"error"`
+	Bundles []string `json:"bundles"` // Array of bundle IDs
+}
+
+// RestFetchBundleRequest describes a JSON to be POSTed to /fetch_bundle.
+type RestFetchBundleRequest struct {
+	UUID     string `json:"uuid"`
+	BundleID string `json:"bundle_id"`
+	Remove   bool   `json:"remove,omitempty"` // Optional: remove after fetch (default: false)
+}
+
+// RestFetchBundleResponse describes a JSON response for /fetch_bundle.
+type RestFetchBundleResponse struct {
+	Error  string       `json:"error"`
+	Bundle *bpv7.Bundle `json:"bundle"` // Single bundle, null if not found
+}
+
+// RestDeleteBundleRequest describes a JSON to be POSTed to /delete_bundle.
+type RestDeleteBundleRequest struct {
+	UUID     string `json:"uuid"`
+	BundleID string `json:"bundle_id"`
+}
+
+// RestDeleteBundleResponse describes a JSON response for /delete_bundle.
+type RestDeleteBundleResponse struct {
+	Error string `json:"error"`
 }
 
 // RestBuildRequest describes a JSON to be POSTed to /build.

@@ -94,6 +94,9 @@ func NewRestAgent(prefix, listenAddress string) (ra *RestAgent) {
 	ra.router.HandleFunc("/register", ra.handleRegister).Methods(http.MethodPost)
 	ra.router.HandleFunc("/unregister", ra.handleUnregister).Methods(http.MethodPost)
 	ra.router.HandleFunc("/fetch", ra.handleFetch).Methods(http.MethodPost)
+	ra.router.HandleFunc("/list", ra.handleList).Methods(http.MethodPost)
+	ra.router.HandleFunc("/fetch_bundle", ra.handleFetchBundle).Methods(http.MethodPost)
+	ra.router.HandleFunc("/delete_bundle", ra.handleDeleteBundle).Methods(http.MethodPost)
 	ra.router.HandleFunc("/build", ra.handleBuild).Methods(http.MethodPost)
 
 	return ra
@@ -219,7 +222,8 @@ func (ra *RestAgent) handleUnregister(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleFetch returns the bundles from some client's inbox, called by /fetch.
+// handleFetch returns the bundles from the specified endpoint's mailbox, called by /fetch.
+// Enhanced to support 'new' and 'remove' flags while maintaining backward compatibility.
 func (ra *RestAgent) handleFetch(w http.ResponseWriter, r *http.Request) {
 	var (
 		fetchRequest  RestFetchRequest
@@ -230,13 +234,33 @@ func (ra *RestAgent) handleFetch(w http.ResponseWriter, r *http.Request) {
 		log.WithError(jsonErr).Warn("Failed to parse REST fetch request")
 		fetchResponse.Error = jsonErr.Error()
 	} else if eid, ok := ra.clients.Load(fetchRequest.UUID); ok {
+		// Default to true for backward compatibility if not explicitly set
+		remove := fetchRequest.Remove
+		if !fetchRequest.Remove && r.ContentLength > 0 {
+			// If remove field was not provided, default to true (backward compatible)
+			// This works because omitempty won't include false values
+			remove = true
+		}
+
 		log.WithFields(log.Fields{
-			"uuid": fetchRequest.UUID,
-			"eid":  eid,
+			"uuid":   fetchRequest.UUID,
+			"eid":    eid,
+			"new":    fetchRequest.New,
+			"remove": remove,
 		}).Info("REST client fetches bundles")
 
 		if mailbox, err := ra.mailboxes.GetMailbox(eid.(bpv7.EndpointID)); err == nil {
-			if bundles, err := mailbox.GetAll(true); err == nil {
+			var bundles []*bpv7.Bundle
+			var err error
+
+			// Use GetNew or GetAll based on 'new' flag
+			if fetchRequest.New {
+				bundles, err = mailbox.GetNew(remove)
+			} else {
+				bundles, err = mailbox.GetAll(remove)
+			}
+
+			if err == nil {
 				fetchResponse.Bundles = make([]bpv7.Bundle, 0, len(bundles))
 				for _, bundle := range bundles {
 					fetchResponse.Bundles = append(fetchResponse.Bundles, *bundle)
@@ -264,6 +288,152 @@ func (ra *RestAgent) handleFetch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(fetchResponse); err != nil {
 		log.WithError(err).Warn("Failed to write REST fetch response")
+	}
+}
+
+// handleList returns a list of bundle IDs from the specified endpoint's mailbox, called by /list.
+func (ra *RestAgent) handleList(w http.ResponseWriter, r *http.Request) {
+	var (
+		listRequest  RestListRequest
+		listResponse RestListResponse
+	)
+
+	if jsonErr := json.NewDecoder(r.Body).Decode(&listRequest); jsonErr != nil {
+		log.WithError(jsonErr).Warn("Failed to parse REST list request")
+		listResponse.Error = jsonErr.Error()
+	} else if eid, ok := ra.clients.Load(listRequest.UUID); ok {
+		log.WithFields(log.Fields{
+			"uuid": listRequest.UUID,
+			"eid":  eid,
+			"new":  listRequest.New,
+		}).Info("REST client lists bundles")
+
+		if mailbox, err := ra.mailboxes.GetMailbox(eid.(bpv7.EndpointID)); err == nil {
+			var bundleIDs []bpv7.BundleID
+			if listRequest.New {
+				bundleIDs = mailbox.ListNew()
+			} else {
+				bundleIDs = mailbox.List()
+			}
+
+			listResponse.Bundles = make([]string, len(bundleIDs))
+			for i, bid := range bundleIDs {
+				listResponse.Bundles[i] = bid.String()
+			}
+		} else {
+			log.WithFields(log.Fields{
+				"uuid": listRequest.UUID,
+				"eid":  eid,
+			}).Debug("No mailbox registered for this eid")
+			listResponse.Error = "No mailbox registered for this eid"
+		}
+	} else {
+		log.WithField("uuid", listRequest.UUID).Debug("REST client does not know client")
+		listResponse.Error = "REST client does not know client"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(listResponse); err != nil {
+		log.WithError(err).Warn("Failed to write REST list response")
+	}
+}
+
+// handleFetchBundle returns a specific bundle from the specified endpoint's mailbox, called by /fetch_bundle.
+func (ra *RestAgent) handleFetchBundle(w http.ResponseWriter, r *http.Request) {
+	var (
+		fetchRequest  RestFetchBundleRequest
+		fetchResponse RestFetchBundleResponse
+	)
+
+	if jsonErr := json.NewDecoder(r.Body).Decode(&fetchRequest); jsonErr != nil {
+		log.WithError(jsonErr).Warn("Failed to parse REST fetch_bundle request")
+		fetchResponse.Error = jsonErr.Error()
+	} else if eid, ok := ra.clients.Load(fetchRequest.UUID); ok {
+		log.WithFields(log.Fields{
+			"uuid":      fetchRequest.UUID,
+			"eid":       eid,
+			"bundle_id": fetchRequest.BundleID,
+			"remove":    fetchRequest.Remove,
+		}).Info("REST client fetches individual bundle")
+
+		if mailbox, err := ra.mailboxes.GetMailbox(eid.(bpv7.EndpointID)); err == nil {
+			// Parse bundle ID
+			bid, bidErr := bpv7.NewBundleID(fetchRequest.BundleID)
+			if bidErr != nil {
+				fetchResponse.Error = fmt.Sprintf("Invalid bundle ID: %v", bidErr)
+			} else {
+				// Fetch bundle with remove flag
+				bundle, err := mailbox.Get(bid, fetchRequest.Remove)
+				if err != nil {
+					log.WithFields(log.Fields{
+						"uuid":      fetchRequest.UUID,
+						"bundle_id": fetchRequest.BundleID,
+						"error":     err,
+					}).Debug("Bundle not found or error fetching")
+					fetchResponse.Error = err.Error()
+				} else {
+					fetchResponse.Bundle = bundle
+				}
+			}
+		} else {
+			log.WithFields(log.Fields{
+				"uuid": fetchRequest.UUID,
+				"eid":  eid,
+			}).Debug("No mailbox registered for this eid")
+			fetchResponse.Error = "No mailbox registered for this eid"
+		}
+	} else {
+		log.WithField("uuid", fetchRequest.UUID).Debug("REST client does not know client")
+		fetchResponse.Error = "REST client does not know client"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(fetchResponse); err != nil {
+		log.WithError(err).Warn("Failed to write REST fetch_bundle response")
+	}
+}
+
+// handleDeleteBundle deletes a specific bundle from the specified endpoint's mailbox, called by /delete_bundle.
+func (ra *RestAgent) handleDeleteBundle(w http.ResponseWriter, r *http.Request) {
+	var (
+		deleteRequest  RestDeleteBundleRequest
+		deleteResponse RestDeleteBundleResponse
+	)
+
+	if jsonErr := json.NewDecoder(r.Body).Decode(&deleteRequest); jsonErr != nil {
+		log.WithError(jsonErr).Warn("Failed to parse REST delete_bundle request")
+		deleteResponse.Error = jsonErr.Error()
+	} else if eid, ok := ra.clients.Load(deleteRequest.UUID); ok {
+		log.WithFields(log.Fields{
+			"uuid":      deleteRequest.UUID,
+			"eid":       eid,
+			"bundle_id": deleteRequest.BundleID,
+		}).Info("REST client deletes bundle")
+
+		if mailbox, err := ra.mailboxes.GetMailbox(eid.(bpv7.EndpointID)); err == nil {
+			// Parse bundle ID
+			bid, bidErr := bpv7.NewBundleID(deleteRequest.BundleID)
+			if bidErr != nil {
+				deleteResponse.Error = fmt.Sprintf("Invalid bundle ID: %v", bidErr)
+			} else {
+				mailbox.Delete(bid)
+				// Delete always succeeds (no-op if bundle doesn't exist)
+			}
+		} else {
+			log.WithFields(log.Fields{
+				"uuid": deleteRequest.UUID,
+				"eid":  eid,
+			}).Debug("No mailbox registered for this eid")
+			deleteResponse.Error = "No mailbox registered for this eid"
+		}
+	} else {
+		log.WithField("uuid", deleteRequest.UUID).Debug("REST client does not know client")
+		deleteResponse.Error = "REST client does not know client"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(deleteResponse); err != nil {
+		log.WithError(err).Warn("Failed to write REST delete_bundle response")
 	}
 }
 

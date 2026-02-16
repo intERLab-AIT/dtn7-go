@@ -338,6 +338,18 @@ func (ra *RestAgent) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// findBundleIDByString finds a BundleID in the list by matching its String()
+// representation. This avoids using NewBundleID() which cannot parse source
+// EIDs containing hyphens (e.g. "new-content", "data-json", "post-123456").
+func findBundleIDByString(bundleIDs []bpv7.BundleID, idStr string) (bpv7.BundleID, bool) {
+	for _, bid := range bundleIDs {
+		if bid.String() == idStr {
+			return bid, true
+		}
+	}
+	return bpv7.BundleID{}, false
+}
+
 // handleFetchBundle returns a specific bundle from the specified endpoint's mailbox, called by /fetch_bundle.
 func (ra *RestAgent) handleFetchBundle(w http.ResponseWriter, r *http.Request) {
 	var (
@@ -357,10 +369,11 @@ func (ra *RestAgent) handleFetchBundle(w http.ResponseWriter, r *http.Request) {
 		}).Info("REST client fetches individual bundle")
 
 		if mailbox, err := ra.mailboxes.GetMailbox(eid.(bpv7.EndpointID)); err == nil {
-			// Parse bundle ID
-			bid, bidErr := bpv7.NewBundleID(fetchRequest.BundleID)
-			if bidErr != nil {
-				fetchResponse.Error = fmt.Sprintf("Invalid bundle ID: %v", bidErr)
+			// Find bundle ID by string match (avoids NewBundleID parser which
+			// can't handle hyphens in source EIDs like wp-content, wp-json)
+			bid, found := findBundleIDByString(mailbox.List(), fetchRequest.BundleID)
+			if !found {
+				fetchResponse.Error = fmt.Sprintf("Bundle not found: %s", fetchRequest.BundleID)
 			} else {
 				// Fetch bundle with remove flag
 				bundle, err := mailbox.Get(bid, fetchRequest.Remove)
@@ -411,10 +424,11 @@ func (ra *RestAgent) handleDeleteBundle(w http.ResponseWriter, r *http.Request) 
 		}).Info("REST client deletes bundle")
 
 		if mailbox, err := ra.mailboxes.GetMailbox(eid.(bpv7.EndpointID)); err == nil {
-			// Parse bundle ID
-			bid, bidErr := bpv7.NewBundleID(deleteRequest.BundleID)
-			if bidErr != nil {
-				deleteResponse.Error = fmt.Sprintf("Invalid bundle ID: %v", bidErr)
+			// Find bundle ID by string match (avoids NewBundleID parser which
+			// can't handle hyphens in source EIDs like wp-content, wp-json)
+			bid, found := findBundleIDByString(mailbox.List(), deleteRequest.BundleID)
+			if !found {
+				deleteResponse.Error = fmt.Sprintf("Bundle not found: %s", deleteRequest.BundleID)
 			} else {
 				mailbox.Delete(bid)
 				// Delete always succeeds (no-op if bundle doesn't exist)

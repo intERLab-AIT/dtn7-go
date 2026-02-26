@@ -9,7 +9,7 @@ log_level = "Info"
 memory_limit = 536870912
 
 [Store]
-path = "/tmp/dtn_store"
+path = "/home/pi/dtn_store"
 # Memory-optimized settings for embedded/IoT devices like Raspberry Pi
 # Total estimated memory usage: ~150MB (down from ~600MB default)
 ValueLogFileSize = 67108864    # 64MB per value log file (default: 1GB)
